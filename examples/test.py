@@ -83,17 +83,45 @@ class TrainCNN(Trainer):
     def validation_step(self, batch_data) -> Dict:
         data, target = batch_data
         output = self.model(data)
-        loss = F.nll_loss(output, target, reduction="sum")
-        pred = output.argmax(dim=1, keepdim=True)
-        correct = pred.eq(target.view_as(pred)).sum().item()
-        return {"loss": loss, "correct": correct}
+        pred = output.argmax(dim=1, keepdim=False)
+        return {
+            "label": target,
+            "output": output,
+            "pred": pred,
+        }
 
     def do_on_train_epoch_start(self) -> None:
-        print(f"Epoch {self.current_train_epoch} started")
+        print(f"Train epoch {self.current_train_epoch} started")
+
+    def do_on_validation_epoch_start(self) -> None:
+        print(f"Validation at train step {self.current_train_step} started")
 
     def do_on_validation_epoch_end(self) -> None:
-        """calculate metrics to be logged and save best model"""
-        print(f"Epoch {self.current_train_epoch} ended")
+        print(f"Validation at train step {self.current_train_step} ended")
+        print("Calculating validation metrics")
+
+        total_loss = 0.0
+        total_correct = 0.0
+        total_samples = 0
+
+        for step_result in self.validation_step_results_for_an_epoch:
+            target = step_result["label"]
+            output = step_result["output"]
+            pred = step_result["pred"]
+
+            loss = F.nll_loss(output, target)
+
+            total_loss += loss.item() * target.size(0)
+            total_samples += target.size(0)
+            total_correct += torch.sum(pred == target)
+
+        epoch_loss = total_loss / total_samples
+        epoch_accuracy = total_correct.item() / total_samples
+
+        print("Validation Loss:", epoch_loss)
+        print("Validation Accuracy:", epoch_accuracy)
+
+        # TODO call logger to log metrics"""
 
 
 @hydra.main(config_path="config", config_name="train", version_base=None)
