@@ -89,11 +89,11 @@ class TrainCNN(Trainer):
         return {"loss": loss, "correct": correct}
 
     def do_on_train_epoch_start(self) -> None:
-        print(f"Epoch {self.current_epoch} started")
+        print(f"Epoch {self.current_train_epoch} started")
 
     def do_on_validation_epoch_end(self) -> None:
         """calculate metrics to be logged and save best model"""
-        print(f"Epoch {self.current_epoch} ended")
+        print(f"Epoch {self.current_train_epoch} ended")
 
 
 @hydra.main(config_path="config", config_name="train", version_base=None)
