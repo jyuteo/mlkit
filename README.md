@@ -1,14 +1,10 @@
 # mlkit
 
-A package for doing great things!
+A package tool for PyTorch ML training
 
 ## Installation
 
 ```bash
 $ pip install mlkit
 ```
-
-## Usage
-
-- TODO
 
