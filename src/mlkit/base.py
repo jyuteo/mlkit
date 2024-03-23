@@ -41,8 +41,6 @@ class Trainer:
 
         self.current_train_epoch = 0
         self.current_train_step = 0
-        self.current_validation_epoch = 0
-        self.current_validation_step = 0
 
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
@@ -100,8 +98,6 @@ class Trainer:
         raise NotImplementedError
 
     def _do_on_validation_step_start(self):
-        if not self.step_by_epoch:
-            self.current_validation_step += 1
         self.do_on_validation_step_start()
 
     def do_on_validation_step_start(self):
@@ -110,7 +106,7 @@ class Trainer:
     def _do_on_validation_step_end(self):
         if not self.step_by_epoch:
             checkpoint_model_and_save_current_best(
-                self.current_validation_step, self.checkpoint_every
+                self.current_train_step, self.checkpoint_every
             )
         self.do_on_validation_step_end()
 
@@ -175,9 +171,6 @@ class Trainer:
         self._do_on_validation_epoch_end()
 
     def _do_on_validation_epoch_start(self):
-        self.current_validation_epoch += 1
-        if self.step_by_epoch:
-            self.current_validation_step += 1
         self.do_on_validation_epoch_start()
 
     def do_on_validation_epoch_start(self):
@@ -188,7 +181,7 @@ class Trainer:
         # TODO save best model, optimizer, lr_scheduler state dict
         if self.step_by_epoch:
             checkpoint_model_and_save_current_best(
-                self.current_validation_step, self.checkpoint_every
+                self.current_train_step, self.checkpoint_every
             )
         self.do_on_validation_epoch_end()
 
