@@ -75,7 +75,9 @@ class TrainCNN(Trainer):
         data, target = batch_data
         output = self.model(data)
         loss = F.cross_entropy(output, target)
-        return {"loss": loss}
+        return {
+            "loss": loss,
+        }
 
     def validation_step(self, batch_data) -> Dict:
         data, target = batch_data

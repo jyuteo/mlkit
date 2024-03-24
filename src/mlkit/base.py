@@ -145,12 +145,13 @@ class Trainer:
 
     def _run_train_epoch(self):
         self._do_on_train_epoch_start()
-        self.model.train()
 
         for batch in self.train_dataloader:
             self._do_on_train_step_start()
 
+            self.model.train()
             self.optimizer.zero_grad()
+
             train_step_results = self.train_step(batch)
             assert (
                 "loss" in train_step_results

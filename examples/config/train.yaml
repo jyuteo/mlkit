@@ -16,7 +16,7 @@ deterministic:
 train_epochs: 10
 step_by_epoch: true
 checkpoint_every: 1
-learning_rate: 0.1
+learning_rate: 0.001
 
 dataloader:
   batch_size: 128
@@ -24,7 +24,7 @@ dataloader:
   num_workers: 4
 
 optimizer:
-  weight_decay: 0.01
+  weight_decay: 0.001
 
 lr_scheduler:
   step_size: 10
