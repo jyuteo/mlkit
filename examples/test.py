@@ -54,13 +54,6 @@ class TrainCNN(Trainer):
             lr_scheduler_config=cfg.lr_scheduler,
         )
 
-    def build_optimizer(self, weight_decay, **kwargs) -> torch.optim.Optimizer:
-        return torch.optim.AdamW(
-            self.model.parameters(),
-            lr=self.learning_rate,
-            weight_decay=weight_decay,
-        )
-
     def build_model(self) -> torch.nn.Module:
         return Net()
 
