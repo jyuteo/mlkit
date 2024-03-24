@@ -8,18 +8,23 @@ hydra:
   run:
     dir: .
 
-epochs: 2
+deterministic:
+  random_seed: 1234
+  torch_use_deterministic_algorithms: true
+  cudnn_backend_deterministic: true
+
+train_epochs: 10
 step_by_epoch: true
 checkpoint_every: 1
-learning_rate: 0.1
+learning_rate: 0.001
 
 dataloader:
-  batch_size: 64
+  batch_size: 128
   shuffle: true
-  num_workers: 2
+  num_workers: 4
 
 optimizer:
-  weight_decay: 0.01
+  weight_decay: 0.001
 
 lr_scheduler:
   step_size: 10

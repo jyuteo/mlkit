@@ -32,7 +32,7 @@ class Net(nn.Module):
         x = F.relu(x)
         x = self.dropout2(x)
         x = self.fc2(x)
-        output = F.log_softmax(x, dim=1)
+        output = F.softmax(x, dim=1)
         return output
 
 
@@ -43,7 +43,7 @@ class TrainCNN(Trainer):
         **kwargs,
     ):
         super().__init__(
-            epochs=cfg.epochs,
+            train_epochs=cfg.train_epochs,
             dataloader_batch_size=cfg.dataloader.batch_size,
             dataloader_num_workers=cfg.dataloader.num_workers,
             dataloader_shuffle=cfg.dataloader.shuffle,
@@ -52,6 +52,10 @@ class TrainCNN(Trainer):
             checkpoint_every=cfg.checkpoint_every,
             optimizer_config=cfg.optimizer,
             lr_scheduler_config=cfg.lr_scheduler,
+        )
+
+        self.set_random_seed_and_torch_deterministic(
+            **cfg.deterministic,
         )
 
     def build_model(self) -> torch.nn.Module:
@@ -70,8 +74,10 @@ class TrainCNN(Trainer):
     def train_step(self, batch_data) -> Dict:
         data, target = batch_data
         output = self.model(data)
-        loss = F.nll_loss(output, target)
-        return {"loss": loss}
+        loss = F.cross_entropy(output, target)
+        return {
+            "loss": loss,
+        }
 
     def validation_step(self, batch_data) -> Dict:
         data, target = batch_data
@@ -102,8 +108,7 @@ class TrainCNN(Trainer):
             output = step_result["output"]
             pred = step_result["pred"]
 
-            loss = F.nll_loss(output, target)
-
+            loss = F.cross_entropy(output, target)
             total_loss += loss.item() * target.size(0)
             total_samples += target.size(0)
             total_correct += torch.sum(pred == target)
