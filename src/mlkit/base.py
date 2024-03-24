@@ -64,7 +64,10 @@ class Trainer:
         raise NotImplementedError
 
     def build_optimizer(self, **kwargs) -> torch.optim.Optimizer:
-        raise NotImplementedError
+        return torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.learning_rate,
+        )
 
     def build_lr_scheduler(
         self,
