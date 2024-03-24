@@ -1,4 +1,7 @@
+import os
+import random
 import torch
+import numpy as np
 
 from torch.utils.data import DataLoader, Dataset
 from typing import List, Dict, Tuple, Any
@@ -7,7 +10,7 @@ from typing import List, Dict, Tuple, Any
 class Trainer:
     def __init__(
         self,
-        epochs: int,
+        train_epochs: int,
         dataloader_batch_size: int,
         dataloader_num_workers: int,
         learning_rate: float,
@@ -19,7 +22,7 @@ class Trainer:
         validate_every: int = 1,
         **kwargs,
     ):
-        self.train_epochs = epochs
+        self.train_epochs = train_epochs
         self.step_by_epoch = step_by_epoch
         self.checkpoint_every = checkpoint_every
         self.validate_every = validate_every
@@ -41,6 +44,32 @@ class Trainer:
         self.current_train_step = 0
 
         self.validation_step_results_for_an_epoch: List[Dict] = []
+
+    def set_random_seed_and_torch_deterministic(
+        self,
+        random_seed: int,
+        torch_use_deterministic_algorithms: bool = True,
+        cudnn_backend_deterministic: bool = True,
+        **kwargs,
+    ):
+        np.random.seed(random_seed)
+        random.seed(random_seed)
+        torch.manual_seed(random_seed)
+        torch.cuda.manual_seed(random_seed)
+        os.environ["PYTHONHASHSEED"] = str(random_seed)
+        print(f"Random seed set as {random_seed}")
+
+        if torch_use_deterministic_algorithms:
+            assert cudnn_backend_deterministic, (
+                "If PyTorch use deterministic algorithms is enabled, "
+                "then CuDNN backend deterministic mode should also be enabled"
+            )
+            torch.use_deterministic_algorithms(True)
+            print("PyTorch use deterministic algorithms enabled")
+        elif cudnn_backend_deterministic:
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            print("CuDNN backend set to deterministic mode")
 
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
