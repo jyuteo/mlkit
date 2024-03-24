@@ -1,9 +1,7 @@
 import torch
 
 from torch.utils.data import DataLoader, Dataset
-from typing import Dict, Tuple, Any
-
-from .utils import checkpoint_model_and_save_current_best
+from typing import List, Dict, Tuple, Any
 
 
 class Trainer:
@@ -41,6 +39,8 @@ class Trainer:
 
         self.current_train_epoch = 0
         self.current_train_step = 0
+
+        self.validation_step_results_for_an_epoch: List[Dict] = []
 
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
@@ -87,8 +87,10 @@ class Trainer:
 
     def _do_on_train_step_end(self):
         if not self.step_by_epoch:
+            # TODO log train loss
             if self.current_train_step % self.validate_every == 0:
                 self._run_validation_epoch()
+        # TODO else: aggregate step loss to epoch loss
         self.do_on_train_step_end()
 
     def do_on_train_step_end(self):
@@ -104,10 +106,6 @@ class Trainer:
         pass
 
     def _do_on_validation_step_end(self):
-        if not self.step_by_epoch:
-            checkpoint_model_and_save_current_best(
-                self.current_train_step, self.checkpoint_every
-            )
         self.do_on_validation_step_end()
 
     def do_on_validation_step_end(self):
@@ -121,9 +119,17 @@ class Trainer:
             self._do_on_train_step_start()
 
             self.optimizer.zero_grad()
-            train_metrics_dict = self.train_step(batch)
-            train_loss = train_metrics_dict["loss"]
+            train_step_results = self.train_step(batch)
+            assert (
+                "loss" in train_step_results
+            ), "Key 'loss' not found in train step results"
+            assert isinstance(
+                train_step_results["loss"], torch.Tensor
+            ), "Value corresponding to key 'loss' is not a PyTorch tensor"
+
+            train_loss = train_step_results["loss"]
             train_loss.backward()
+
             self.optimizer.step()
 
             if not self.step_by_epoch:
@@ -135,7 +141,6 @@ class Trainer:
             self.lr_scheduler.step()
 
         self._do_on_train_epoch_end()
-        # print(f"Epoch {self.current_epoch} training loss: {train_loss.item()}")
 
     def _do_on_train_epoch_start(self):
         self.current_train_epoch += 1
@@ -148,11 +153,11 @@ class Trainer:
         pass
 
     def _do_on_train_epoch_end(self):
-        # TODO log metrics
         # TODO checkpoint best model, optimizer, lr_scheduler state dict
         if self.step_by_epoch:
             if self.current_train_step % self.validate_every == 0:
                 self._run_validation_epoch()
+            # TODO log epoch loss
         self.do_on_train_epoch_end()
 
     def do_on_train_epoch_end(self):
@@ -165,12 +170,15 @@ class Trainer:
         with torch.no_grad():
             for batch in self.val_dataloader:
                 self._do_on_validation_step_start()
-                _ = self.validation_step(batch)
+                result = self.validation_step(batch)
+                if result:
+                    self.validation_step_results_for_an_epoch.append(result)
                 self._do_on_validation_step_end()
 
         self._do_on_validation_epoch_end()
 
     def _do_on_validation_epoch_start(self):
+        self.validation_step_results_for_an_epoch = []
         self.do_on_validation_epoch_start()
 
     def do_on_validation_epoch_start(self):
@@ -179,10 +187,6 @@ class Trainer:
     def _do_on_validation_epoch_end(self):
         # TODO log metrics
         # TODO save best model, optimizer, lr_scheduler state dict
-        if self.step_by_epoch:
-            checkpoint_model_and_save_current_best(
-                self.current_train_step, self.checkpoint_every
-            )
         self.do_on_validation_epoch_end()
 
     def do_on_validation_epoch_end(self):
