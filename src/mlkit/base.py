@@ -61,8 +61,8 @@ class Trainer:
 
         if torch_use_deterministic_algorithms:
             assert cudnn_backend_deterministic, (
-                "If PyTorch use deterministic algorithms is enabled, "
-                "then CuDNN backend deterministic mode should also be enabled"
+                "If torch_use_deterministic_algorithms is enabled, "
+                "cudnn_backend_deterministic mode should also be enabled"
             )
             torch.use_deterministic_algorithms(True)
             print("PyTorch use deterministic algorithms enabled")
