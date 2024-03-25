@@ -2,3 +2,4 @@ poetry
 hydra-core
 torch
 torchvision
+matplotlib

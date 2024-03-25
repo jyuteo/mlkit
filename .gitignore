@@ -143,3 +143,6 @@ dmypy.json
 
 # Data
 data/
+
+# Logs
+logs/

@@ -6,6 +6,8 @@ import numpy as np
 from torch.utils.data import DataLoader, Dataset
 from typing import List, Dict, Tuple, Any
 
+from .metrics_logger import MetricsLogger
+
 
 class Trainer:
     def __init__(
@@ -20,6 +22,7 @@ class Trainer:
         dataloader_shuffle: bool = True,
         step_by_epoch: bool = True,
         validate_every: int = 1,
+        metrics_log_filepath: str = "./logs/metrics_log.json",
         **kwargs,
     ):
         self.train_epochs = train_epochs
@@ -43,7 +46,9 @@ class Trainer:
         self.current_train_epoch = 0
         self.current_train_step = 0
 
-        self.validation_step_results_for_an_epoch: List[Dict] = []
+        self.train_step_results: Dict = dict()
+        self.validation_step_results_for_an_epoch: List[Dict] = list()
+        self.metrics_logger = MetricsLogger(metrics_log_filepath)
 
     def set_random_seed_and_torch_deterministic(
         self,
@@ -110,8 +115,8 @@ class Trainer:
         raise NotImplementedError
 
     def _do_on_train_step_start(self):
-        if not self.step_by_epoch:
-            self.current_train_step += 1
+        self.current_train_step += 1
+        self.train_step_results = dict()
         self.do_on_train_step_start()
 
     def do_on_train_step_start(self):
@@ -160,6 +165,7 @@ class Trainer:
                 train_step_results["loss"], torch.Tensor
             ), "Value corresponding to key 'loss' is not a PyTorch tensor"
 
+            self.train_step_results = train_step_results
             train_loss = train_step_results["loss"]
             train_loss.backward()
 
@@ -178,8 +184,6 @@ class Trainer:
     def _do_on_train_epoch_start(self):
         self.current_train_epoch += 1
         print(f"Epoch {self.current_train_epoch}/{self.train_epochs}")
-        if self.step_by_epoch:
-            self.current_train_step += 1
         self.do_on_train_epoch_start()
 
     def do_on_train_epoch_start(self):
@@ -188,7 +192,7 @@ class Trainer:
     def _do_on_train_epoch_end(self):
         # TODO checkpoint best model, optimizer, lr_scheduler state dict
         if self.step_by_epoch:
-            if self.current_train_step % self.validate_every == 0:
+            if self.current_train_epoch % self.validate_every == 0:
                 self._run_validation_epoch()
             # TODO log epoch loss
         self.do_on_train_epoch_end()
@@ -211,7 +215,7 @@ class Trainer:
         self._do_on_validation_epoch_end()
 
     def _do_on_validation_epoch_start(self):
-        self.validation_step_results_for_an_epoch = []
+        self.validation_step_results_for_an_epoch = list()
         self.do_on_validation_epoch_start()
 
     def do_on_validation_epoch_start(self):
