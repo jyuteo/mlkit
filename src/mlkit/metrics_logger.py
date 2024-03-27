@@ -57,6 +57,8 @@ class MetricsLogger:
             return False
 
     def _convert_to_serializable(self, value):
+        if isinstance(value, (int, float, str)):
+            return value
         if isinstance(value, torch.Tensor):
             if value.dim() == 0:
                 return value.item()
