@@ -1,11 +1,9 @@
-import os
-import random
 import torch
-import numpy as np
 
 from torch.utils.data import DataLoader, Dataset
 from typing import List, Dict, Tuple, Any
 
+from .logger import Logger
 from .metrics_logger import MetricsLogger
 
 
@@ -22,6 +20,7 @@ class Trainer:
         dataloader_shuffle: bool = True,
         step_by_epoch: bool = True,
         validate_every: int = 1,
+        experiment_log_filepath: str = "./logs/log.json",
         metrics_log_filepath: str = "./logs/metrics_log.json",
         **kwargs,
     ):
@@ -48,33 +47,13 @@ class Trainer:
 
         self.train_step_results: Dict = dict()
         self.validation_step_results_for_an_epoch: List[Dict] = list()
+
+        self.logger = Logger(experiment_log_filepath)
         self.metrics_logger = MetricsLogger(metrics_log_filepath)
 
-    def set_random_seed_and_torch_deterministic(
-        self,
-        random_seed: int,
-        torch_use_deterministic_algorithms: bool = True,
-        cudnn_backend_deterministic: bool = True,
-        **kwargs,
-    ):
-        np.random.seed(random_seed)
-        random.seed(random_seed)
-        torch.manual_seed(random_seed)
-        torch.cuda.manual_seed(random_seed)
-        os.environ["PYTHONHASHSEED"] = str(random_seed)
-        print(f"Random seed set as {random_seed}")
-
-        if torch_use_deterministic_algorithms:
-            assert cudnn_backend_deterministic, (
-                "If torch_use_deterministic_algorithms is enabled, "
-                "cudnn_backend_deterministic mode should also be enabled"
-            )
-            torch.use_deterministic_algorithms(True)
-            print("PyTorch use deterministic algorithms enabled")
-        elif cudnn_backend_deterministic:
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.benchmark = False
-            print("CuDNN backend set to deterministic mode")
+        config = locals()
+        config.pop("self")
+        self.logger.log({"msg": "Config", **config})
 
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
@@ -105,11 +84,11 @@ class Trainer:
 
     def build_lr_scheduler(
         self,
-        step: int = 30,
+        step_size: int = 30,
         gamma: float = 0.1,
         **kwargs,
     ) -> torch.optim.lr_scheduler.LRScheduler:
-        return torch.optim.lr_scheduler.StepLR(self.optimizer, step, gamma)
+        return torch.optim.lr_scheduler.StepLR(self.optimizer, step_size, gamma)
 
     def train_step(self, batch_data: Any) -> Dict:
         raise NotImplementedError
@@ -117,6 +96,14 @@ class Trainer:
     def _do_on_train_step_start(self):
         self.current_train_step += 1
         self.train_step_results = dict()
+        if not self.step_by_epoch:
+            self.logger.debug(
+                {
+                    "msg": "Train step started",
+                    "train_epoch": self.current_train_epoch,
+                    "train_step": self.current_train_step,
+                }
+            )
         self.do_on_train_step_start()
 
     def do_on_train_step_start(self):
@@ -124,10 +111,8 @@ class Trainer:
 
     def _do_on_train_step_end(self):
         if not self.step_by_epoch:
-            # TODO log train loss
             if self.current_train_step % self.validate_every == 0:
                 self._run_validation_epoch()
-        # TODO else: aggregate step loss to epoch loss
         self.do_on_train_step_end()
 
     def do_on_train_step_end(self):
@@ -183,7 +168,14 @@ class Trainer:
 
     def _do_on_train_epoch_start(self):
         self.current_train_epoch += 1
-        print(f"Epoch {self.current_train_epoch}/{self.train_epochs}")
+        if self.step_by_epoch:
+            self.logger.log(
+                {
+                    "msg": "Epoch started",
+                    "train_epoch": self.current_train_epoch,
+                    "train_step": self.current_train_step,
+                }
+            )
         self.do_on_train_epoch_start()
 
     def do_on_train_epoch_start(self):
@@ -194,7 +186,6 @@ class Trainer:
         if self.step_by_epoch:
             if self.current_train_epoch % self.validate_every == 0:
                 self._run_validation_epoch()
-            # TODO log epoch loss
         self.do_on_train_epoch_end()
 
     def do_on_train_epoch_end(self):
@@ -216,13 +207,19 @@ class Trainer:
 
     def _do_on_validation_epoch_start(self):
         self.validation_step_results_for_an_epoch = list()
+        self.logger.debug(
+            {
+                "msg": "Validation started",
+                "train_epoch": self.current_train_epoch,
+                "train_step": self.current_train_step,
+            }
+        )
         self.do_on_validation_epoch_start()
 
     def do_on_validation_epoch_start(self):
         pass
 
     def _do_on_validation_epoch_end(self):
-        # TODO log metrics
         # TODO save best model, optimizer, lr_scheduler state dict
         self.do_on_validation_epoch_end()
 

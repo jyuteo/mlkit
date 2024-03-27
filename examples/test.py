@@ -10,6 +10,7 @@ from omegaconf import DictConfig
 from torchvision import datasets, transforms
 
 from mlkit.base import Trainer
+from mlkit.utils import set_random_seed_and_torch_deterministic
 
 
 class Net(nn.Module):
@@ -52,12 +53,11 @@ class TrainCNN(Trainer):
             learning_rate=cfg.learning_rate,
             step_by_epoch=cfg.step_by_epoch,
             checkpoint_every=cfg.checkpoint_every,
+            validate_every=cfg.validate_every,
             optimizer_config=cfg.optimizer,
             lr_scheduler_config=cfg.lr_scheduler,
-        )
-
-        self.set_random_seed_and_torch_deterministic(
-            **cfg.deterministic,
+            experiment_log_filepath=cfg.log_filepath.experiment,
+            metrics_log_filepath=cfg.log_filepath.metrics,
         )
 
     def build_model(self) -> torch.nn.Module:
@@ -91,24 +91,18 @@ class TrainCNN(Trainer):
             "pred": pred,
         }
 
-    def do_on_train_epoch_start(self) -> None:
-        print(f"Train epoch {self.current_train_epoch} started")
-
     def do_on_train_step_end(self) -> None:
         self.metrics_logger.log(
             "train",
             {
                 "train_step": self.current_train_step,
+                "lr": self.optimizer.param_groups[0]["lr"],
                 **self.train_step_results,
             },
         )
 
-    def do_on_validation_epoch_start(self) -> None:
-        print(f"Validation at train step {self.current_train_step} started")
-
     def do_on_validation_epoch_end(self) -> None:
-        print(f"Validation at train step {self.current_train_step} ended")
-        print("Calculating validation metrics")
+        self.logger.debug("Validation done. Calculating validation metrics")
 
         total_loss = 0.0
         total_correct = 0.0
@@ -127,17 +121,14 @@ class TrainCNN(Trainer):
         epoch_loss = total_loss / total_samples
         epoch_accuracy = total_correct.item() / total_samples
 
-        print("Validation Loss:", epoch_loss)
-        print("Validation Accuracy:", epoch_accuracy)
-
-        self.metrics_logger.log(
-            "val",
-            {
-                "train_step": self.current_train_step,
-                "loss": epoch_loss,
-                "accuracy": epoch_accuracy,
-            },
-        )
+        results = {
+            "train_epoch": self.current_train_epoch,
+            "train_step": self.current_train_step,
+            "loss": epoch_loss,
+            "accuracy": epoch_accuracy,
+        }
+        self.logger.log({"msg": "Validation results", **results})
+        self.metrics_logger.log("val", results)
 
 
 def plot_metrics(log_filepath: str):
@@ -146,26 +137,48 @@ def plot_metrics(log_filepath: str):
 
     train_loss_x = [x["train_step"] for x in data["train"]]
     train_loss_y = [x["loss"] for x in data["train"]]
+    lr_y = [x["lr"] for x in data["train"]]
 
     val_loss_x = [x["train_step"] for x in data["val"]]
     val_loss_y = [x["loss"] for x in data["val"]]
+    val_accuracy_y = [x["accuracy"] for x in data["val"]]
 
-    plt.plot(train_loss_x, train_loss_y, label="train")
-    plt.plot(val_loss_x, val_loss_y, label="val")
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
 
-    plt.xlabel("step")
-    plt.ylabel("loss")
-    plt.legend()
-    plt.title("Loss")
+    ax1.plot(train_loss_x, train_loss_y, label="train", color="blue")
+    ax1.set_xlabel("Step")
+    ax1.set_ylabel("Loss")
+    ax1.legend()
+    ax1.set_title("Training Loss")
+
+    ax2.plot(val_loss_x, val_loss_y, label="val", color="orange")
+    ax2.set_xlabel("Step")
+    ax2.set_ylabel("Loss")
+    ax2.legend()
+    ax2.set_title("Validation Loss")
+
+    ax3.plot(val_loss_x, val_accuracy_y, label="val", color="green")
+    ax3.set_xlabel("Step")
+    ax3.set_ylabel("Accuracy")
+    ax3.legend()
+    ax3.set_title("Validation Accuracy")
+
+    ax4.plot(lr_y, label="lr", color="yellow")
+    ax4.set_xlabel("Step")
+    ax4.set_ylabel("Learning Rate")
+    ax4.legend()
+    ax4.set_title("Learning Rate")
+
+    plt.tight_layout()
     plt.show()
 
 
 @hydra.main(config_path="config", config_name="train", version_base=None)
 def main(cfg: DictConfig) -> None:
-    print(cfg)
+    set_random_seed_and_torch_deterministic(**cfg.deterministic)
     trainer = TrainCNN(cfg)
     trainer.train()
-    plot_metrics(cfg.metrics_log_filepath)
+    plot_metrics(cfg.log_filepath.metrics)
 
 
 if __name__ == "__main__":
