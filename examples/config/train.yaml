@@ -8,15 +8,18 @@ hydra:
   run:
     dir: .
 
+log_filepath:
+  experiment: ./logs/log.json
+  metrics: ./logs/metrics_log.json
+
 deterministic:
   random_seed: 1234
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 2
+train_epochs: 3
 step_by_epoch: false
-checkpoint_every: 1
-validate_every: 100
+validate_every: 200
 
 dataloader:
   batch_size: 128
@@ -32,6 +35,6 @@ lr_scheduler:
   step_size: 1000
   gamma: 0.01
 
-log_filepath:
-  experiment: ./logs/log.json
-  metrics: ./logs/metrics_log.json
+model_checkpoint:
+  checkpoint_every: 100
+  save_dir: ./checkpoints

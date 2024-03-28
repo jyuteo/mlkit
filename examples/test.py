@@ -52,13 +52,16 @@ class TrainCNN(Trainer):
             dataloader_shuffle=cfg.dataloader.shuffle,
             learning_rate=cfg.learning_rate,
             step_by_epoch=cfg.step_by_epoch,
-            checkpoint_every=cfg.checkpoint_every,
+            checkpoint_every=cfg.model_checkpoint.checkpoint_every,
             validate_every=cfg.validate_every,
             optimizer_config=cfg.optimizer,
             lr_scheduler_config=cfg.lr_scheduler,
             experiment_log_filepath=cfg.log_filepath.experiment,
             metrics_log_filepath=cfg.log_filepath.metrics,
+            model_checkpoint_dir=cfg.model_checkpoint.save_dir,
         )
+
+        self.best_metrics: Dict = {}
 
     def build_model(self) -> torch.nn.Module:
         return Net()
@@ -129,6 +132,15 @@ class TrainCNN(Trainer):
         }
         self.logger.log({"msg": "Validation results", **results})
         self.metrics_logger.log("val", results)
+
+        if self.is_best_model(results):
+            self.save_best_model_checkpoint()
+
+    def is_best_model(self, metrics: Dict) -> bool:
+        if not self.best_metrics:
+            self.best_metrics = metrics
+            return False
+        return metrics["accuracy"] > self.best_metrics["accuracy"]
 
 
 def plot_metrics(log_filepath: str):
