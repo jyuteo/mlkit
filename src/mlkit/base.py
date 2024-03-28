@@ -22,6 +22,8 @@ class Trainer:
         dataloader_shuffle: bool = True,
         step_by_epoch: bool = True,
         validate_every: int = 1,
+        resume_training: bool = False,
+        resume_training_checkpoint_path: str = "",
         experiment_log_filepath: str = "./logs/log.json",
         metrics_log_filepath: str = "./logs/metrics_log.json",
         model_checkpoint_dir: str = "./checkpoints",
@@ -62,6 +64,24 @@ class Trainer:
         config = locals()
         config.pop("self")
         self.logger.log({"msg": "Config", **config})
+
+        if resume_training:
+            self._load_state_dicts_to_resume_training(resume_training_checkpoint_path)
+
+    def _load_state_dicts_to_resume_training(self, checkpoint_path: str):
+        checkpoint = torch.load(checkpoint_path)
+        self.model.load_state_dict(checkpoint["model"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        self.current_train_epoch = checkpoint["epoch"]
+        self.current_train_step = checkpoint["step"]
+        self.logger.log(
+            {
+                "msg": f"Resume training from {checkpoint_path}",
+                "train_epoch": self.current_train_epoch,
+                "train_step": self.current_train_step,
+            }
+        )
 
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
@@ -248,6 +268,7 @@ class Trainer:
             "step": self.current_train_step,
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
+            "lr_scheduler": self.lr_scheduler.state_dict(),
         }
         if is_best:
             self.logger.log(

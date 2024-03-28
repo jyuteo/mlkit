@@ -17,7 +17,7 @@ deterministic:
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 3
+train_epochs: 5
 step_by_epoch: false
 validate_every: 200
 
@@ -38,3 +38,7 @@ lr_scheduler:
 model_checkpoint:
   checkpoint_every: 100
   save_dir: ./checkpoints
+
+resume_training:
+  enabled: true
+  checkpoint_path: ./checkpoints/checkpoint.t7
