@@ -59,6 +59,8 @@ class TrainCNN(Trainer):
             experiment_log_filepath=cfg.log_filepath.experiment,
             metrics_log_filepath=cfg.log_filepath.metrics,
             model_checkpoint_dir=cfg.model_checkpoint.save_dir,
+            resume_training=cfg.resume_training.enabled,
+            resume_training_checkpoint_path=cfg.resume_training.checkpoint_path,
         )
 
         self.best_metrics: Dict = {}
