@@ -246,7 +246,7 @@ class Trainer:
         state = {
             "epoch": self.current_train_epoch,
             "step": self.current_train_step,
-            "state_dict": self.model.state_dict(),
+            "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
         }
         if is_best:
