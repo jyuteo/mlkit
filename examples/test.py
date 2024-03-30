@@ -1,3 +1,6 @@
+# Description   : An example for training a CNN model using the MLKit framework
+# Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 test.py  # noqa: E501
+
 import json
 import hydra
 import torch
@@ -9,8 +12,9 @@ from typing import Dict
 from omegaconf import DictConfig
 from torchvision import datasets, transforms
 
-from mlkit.base import Trainer
-from mlkit.utils import set_random_seed_and_torch_deterministic
+from mlkit.trainer import Trainer
+from mlkit.utils.trainer_utils import TrainerUtils
+from mlkit.utils.ddp_utils import DDPUtils
 
 
 class Net(nn.Module):
@@ -56,11 +60,12 @@ class TrainCNN(Trainer):
             validate_every=cfg.validate_every,
             optimizer_config=cfg.optimizer,
             lr_scheduler_config=cfg.lr_scheduler,
-            experiment_log_filepath=cfg.log_filepath.experiment,
-            metrics_log_filepath=cfg.log_filepath.metrics,
+            experiment_log_dir=cfg.log.experiment_log_dir,
+            metrics_log_filepath=cfg.log.metrics_log_path,
             model_checkpoint_dir=cfg.model_checkpoint.save_dir,
+            model_snapshot_path=cfg.model_snapshot.save_path,
             resume_training=cfg.resume_training.enabled,
-            resume_training_checkpoint_path=cfg.resume_training.checkpoint_path,
+            resume_training_model_state_dict_path=cfg.resume_training.model_state_dict_path,
         )
 
         self.best_metrics: Dict = {}
@@ -136,7 +141,7 @@ class TrainCNN(Trainer):
         self.metrics_logger.log("val", results)
 
         if self.is_best_model(results):
-            self.save_best_model_checkpoint()
+            self.save_best_model_state_dicts()
 
     def is_best_model(self, metrics: Dict) -> bool:
         if not self.best_metrics:
@@ -149,13 +154,17 @@ def plot_metrics(log_filepath: str):
     with open(log_filepath, "r") as f:
         data = json.load(f)
 
-    train_loss_x = [x["train_step"] for x in data["train"]]
-    train_loss_y = [x["loss"] for x in data["train"]]
-    lr_y = [x["lr"] for x in data["train"]]
+    train_loss_x, train_loss_y, lr_y = [], [], []
+    if "train" in data:
+        train_loss_x = [x["train_step"] for x in data["train"]]
+        train_loss_y = [x["loss"] for x in data["train"]]
+        lr_y = [x["lr"] for x in data["train"]]
 
-    val_loss_x = [x["train_step"] for x in data["val"]]
-    val_loss_y = [x["loss"] for x in data["val"]]
-    val_accuracy_y = [x["accuracy"] for x in data["val"]]
+    val_loss_x, val_loss_y, val_accuracy_y = [], [], []
+    if "val" in data:
+        val_loss_x = [x["train_step"] for x in data["val"]]
+        val_loss_y = [x["loss"] for x in data["val"]]
+        val_accuracy_y = [x["accuracy"] for x in data["val"]]
 
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
 
@@ -189,10 +198,18 @@ def plot_metrics(log_filepath: str):
 
 @hydra.main(config_path="config", config_name="train", version_base=None)
 def main(cfg: DictConfig) -> None:
-    set_random_seed_and_torch_deterministic(**cfg.deterministic)
-    trainer = TrainCNN(cfg)
-    trainer.train()
-    plot_metrics(cfg.log_filepath.metrics)
+    TrainerUtils.set_random_seed_and_torch_deterministic(**cfg.deterministic)
+
+    if DDPUtils.is_cuda_available():
+        DDPUtils.setup_ddp_torchrun()
+        trainer = TrainCNN(cfg)
+        trainer.train()
+        DDPUtils.cleanup_ddp()
+    else:
+        trainer = TrainCNN(cfg)
+        trainer.train()
+
+    plot_metrics(cfg.log.metrics_log_path)
 
 
 if __name__ == "__main__":

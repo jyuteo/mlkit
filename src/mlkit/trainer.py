@@ -1,12 +1,16 @@
 import os
 import torch
 
-from torch.utils.data import DataLoader, Dataset
 from typing import List, Dict, Tuple, Any
 from pathlib import Path
+from torch.utils.data import DataLoader, Dataset
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from .logger import Logger
 from .metrics_logger import MetricsLogger
+from .utils.ddp_utils import DDPUtils
+
+ddp_utils = DDPUtils()
 
 
 class Trainer:
@@ -23,12 +27,32 @@ class Trainer:
         step_by_epoch: bool = True,
         validate_every: int = 1,
         resume_training: bool = False,
-        resume_training_checkpoint_path: str = "",
-        experiment_log_filepath: str = "./logs/log.json",
+        resume_training_model_state_dict_path: str = "",
+        experiment_log_dir: str = "./logs",
         metrics_log_filepath: str = "./logs/metrics_log.json",
         model_checkpoint_dir: str = "./checkpoints",
+        model_snapshot_path: str = "./snapshot.t7",
         **kwargs,
     ):
+        config = locals()
+        config.pop("self")
+
+        dir = Path(experiment_log_dir)
+        dir.mkdir(parents=True, exist_ok=True)
+        experiment_log_filepath = os.path.join(
+            experiment_log_dir, f"train_log.device_{DDPUtils.get_device()}.json"
+        )
+        self.logger = Logger(experiment_log_filepath)
+        self.metrics_logger = MetricsLogger(metrics_log_filepath)
+
+        self.logger.log({"msg": "Config", **config})
+
+        self.rank = DDPUtils.get_rank()
+        self.is_distributed_training = self.rank is not None
+        self.is_master_process = (
+            not self.is_distributed_training or DDPUtils.is_master_process()
+        )
+
         self.train_epochs = train_epochs
         self.step_by_epoch = step_by_epoch
         self.checkpoint_every = checkpoint_every
@@ -41,7 +65,7 @@ class Trainer:
         self.train_dataset, self.val_dataset = self.build_dataset()
         self.train_dataloader, self.val_dataloader = self.build_dataloader()
 
-        self.model = self.build_model()
+        self.model = DDPUtils.move_model_to_device(self.build_model())
 
         self.learning_rate = learning_rate
         self.optimizer = self.build_optimizer(**optimizer_config)
@@ -53,35 +77,51 @@ class Trainer:
         self.train_step_results: Dict = dict()
         self.validation_step_results_for_an_epoch: List[Dict] = list()
 
-        self.logger = Logger(experiment_log_filepath)
-        self.metrics_logger = MetricsLogger(metrics_log_filepath)
-
         self.model_checkpoint_dir = model_checkpoint_dir
-        if not os.path.exists(self.model_checkpoint_dir):
-            dir = Path(self.model_checkpoint_dir)
-            dir.mkdir(parents=True, exist_ok=True)
+        dir = Path(self.model_checkpoint_dir)
+        dir.mkdir(parents=True, exist_ok=True)
 
-        config = locals()
-        config.pop("self")
-        self.logger.log({"msg": "Config", **config})
-
-        if resume_training:
-            self._load_state_dicts_to_resume_training(resume_training_checkpoint_path)
+        self.model_snapshot_path = model_snapshot_path
+        if os.path.exists(self.model_snapshot_path):
+            self._load_state_dicts_to_resume_training(self.model_snapshot_path)
+            self.logger.log(
+                {
+                    "msg": f"Resuming failed training from snapshot: {self.model_snapshot_path}",
+                    "train_epoch": self.current_train_epoch,
+                    "train_step": self.current_train_step,
+                }
+            )
+        elif resume_training:
+            self._load_state_dicts_to_resume_training(
+                resume_training_model_state_dict_path
+            )
+            self.logger.log(
+                {
+                    "msg": f"Resuming training from given model state dict: {resume_training_model_state_dict_path}",  # noqa: E501
+                    "train_epoch": self.current_train_epoch,
+                    "train_step": self.current_train_step,
+                }
+            )
 
     def _load_state_dicts_to_resume_training(self, checkpoint_path: str):
+        assert os.path.exists(
+            checkpoint_path
+        ), f"Checkpoint path does not exist: {checkpoint_path}"
+        print(checkpoint_path)
         checkpoint = torch.load(checkpoint_path)
         self.model.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         self.current_train_epoch = checkpoint["epoch"]
         self.current_train_step = checkpoint["step"]
-        self.logger.log(
-            {
-                "msg": f"Resume training from {checkpoint_path}",
-                "train_epoch": self.current_train_epoch,
-                "train_step": self.current_train_step,
-            }
-        )
+
+    def _delete_model_snapshot(self):
+        if os.path.exists(self.model_snapshot_path):
+            os.remove(self.model_snapshot_path)
+
+    def _set_ddp_barrier(self) -> None:
+        if self.is_distributed_training:
+            DDP.set_barrier()
 
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
@@ -124,6 +164,7 @@ class Trainer:
     def _do_on_train_step_start(self):
         self.current_train_step += 1
         self.train_step_results = dict()
+        self._set_ddp_barrier()
         if not self.step_by_epoch:
             self.logger.debug(
                 {
@@ -138,11 +179,13 @@ class Trainer:
         pass
 
     def _do_on_train_step_end(self):
-        if not self.step_by_epoch:
+        self._set_ddp_barrier()
+        if not self.step_by_epoch and self.is_master_process:
             if self.current_train_step % self.checkpoint_every == 0:
-                self.save_model_checkpoint()
+                self.save_model_state_dicts()
             if self.current_train_step % self.validate_every == 0:
                 self._run_validation_epoch()
+        self.save_model_snapshot()
         self.do_on_train_step_end()
 
     def do_on_train_step_end(self):
@@ -172,6 +215,7 @@ class Trainer:
             self.model.train()
             self.optimizer.zero_grad()
 
+            batch = DDPUtils.move_tensor_or_tuple_of_tensors_to_device(batch)
             train_step_results = self.train_step(batch)
             assert (
                 "loss" in train_step_results
@@ -211,9 +255,9 @@ class Trainer:
         pass
 
     def _do_on_train_epoch_end(self):
-        if self.step_by_epoch:
+        if self.step_by_epoch and self.is_master_process:
             if self.current_train_epoch % self.checkpoint_every == 0:
-                self.save_model_checkpoint()
+                self.save_model_state_dicts()
             if self.current_train_epoch % self.validate_every == 0:
                 self._run_validation_epoch()
         self.do_on_train_epoch_end()
@@ -236,6 +280,7 @@ class Trainer:
         self._do_on_validation_epoch_end()
 
     def _do_on_validation_epoch_start(self):
+        self._set_ddp_barrier()
         self.validation_step_results_for_an_epoch = list()
         self.logger.debug(
             {
@@ -250,6 +295,7 @@ class Trainer:
         pass
 
     def _do_on_validation_epoch_end(self):
+        self._set_ddp_barrier()
         self.do_on_validation_epoch_end()
 
     def do_on_validation_epoch_end(self):
@@ -258,11 +304,16 @@ class Trainer:
     def train(self):
         for _ in range(self.current_train_epoch + 1, self.train_epochs + 1):
             self._run_train_epoch()
+        self._delete_model_snapshot()
 
-    def save_model_checkpoint(
+    def save_model_state_dicts(
         self,
+        is_snapshot: bool = False,
         is_best: bool = False,
     ):
+        if not is_snapshot:
+            assert self.is_master_process, "Only master process can save the model"
+
         state = {
             "epoch": self.current_train_epoch,
             "step": self.current_train_step,
@@ -279,16 +330,23 @@ class Trainer:
                 }
             )
             path = os.path.join(self.model_checkpoint_dir, "best.t7")
+        elif is_snapshot:
+            path = os.path.join(self.model_snapshot_path)
         else:
-            self.logger.log(
+            self.logger.debug(
                 {
                     "msg": "Saving model checkpoint",
                     "train_epoch": self.current_train_epoch,
                     "train_step": self.current_train_step,
                 }
             )
-            path = os.path.join(self.model_checkpoint_dir, "checkpoint.t7")
+            path = os.path.join(
+                self.model_checkpoint_dir, f"checkpoint_{self.current_train_step}.t7"
+            )
         torch.save(state, path)
 
-    def save_best_model_checkpoint(self):
-        self.save_model_checkpoint(is_best=True)
+    def save_best_model_state_dicts(self):
+        self.save_model_state_dicts(is_best=True)
+
+    def save_model_snapshot(self):
+        self.save_model_state_dicts(is_snapshot=True)
