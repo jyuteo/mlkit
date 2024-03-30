@@ -8,16 +8,16 @@ hydra:
   run:
     dir: .
 
-log_filepath:
-  experiment: ./logs/log.json
-  metrics: ./logs/metrics_log.json
+log:
+  experiment_log_dir: ./logs
+  metrics_log_path: ./logs/metrics_log.json
 
 deterministic:
   random_seed: 1234
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 5
+train_epochs: 2
 step_by_epoch: false
 validate_every: 200
 
@@ -32,13 +32,23 @@ optimizer:
   weight_decay: 0.001
 
 lr_scheduler:
-  step_size: 1000
+  step_size: 2500
   gamma: 0.01
 
+# saves model state dicts throughout training phase at defined steps
+# is step_by_epoch = True, and checkpoint_every = 2, then model state dict will be saved every 2 epochs
+# is step_by_epoch = False, and checkpoint_every = 2, then model state dict will be saved every 2 train steps
 model_checkpoint:
-  checkpoint_every: 100
+  checkpoint_every: 300
   save_dir: ./checkpoints
 
+# saves latest model state dict at current train step, mainly for resume of interrupted training
+# snapshot will be deleted when training is finished
+model_snapshot:
+  save_path: ./snapshots/snapshot.t7
+
+# if enabled, training will resume from the model state dict in the path provided
+# else, training will start from scratch
 resume_training:
-  enabled: true
-  checkpoint_path: ./checkpoints/checkpoint.t7
+  enabled: false
+  model_state_dict_path: ./checkpoints/checkpoint.t7

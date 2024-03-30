@@ -8,8 +8,11 @@ from pathlib import Path
 from typing import Dict, Union, Tuple
 from logging import FileHandler, StreamHandler
 
+from .utils.ddp_utils import DDPUtils
+
 
 class JsonFormatter(logging.Formatter):
+    DEVICE = DDPUtils.get_device()
     RECORD_DICT_KEYS = [
         "name",
         "msg",
@@ -31,12 +34,14 @@ class JsonFormatter(logging.Formatter):
         "threadName",
         "processName",
         "process",
+        "device",
     ]
 
     def format(self, record):
         record_dict = {
             "timestamp": self.formatTime(record, "%d-%m-%Y %H:%M:%S"),
             "level": record.levelname,
+            "device": self.DEVICE,
             "message": record.getMessage(),
         }
         for k, v in record.__dict__.items():
@@ -62,7 +67,7 @@ class Logger:
             dir_path = Path(self.log_filepath).parent
             dir_path.mkdir(parents=True, exist_ok=True)
 
-        logger = logging.getLogger(Path(self.log_filepath).stem)
+        logger = logging.getLogger()
         logger.setLevel(logging.DEBUG)
 
         sh = StreamHandler(sys.stdout)
