@@ -149,3 +149,4 @@ logs/
 
 # Model checkpoints
 checkpoints/
+snapshots/
