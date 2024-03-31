@@ -149,7 +149,12 @@ class TrainCNN(Trainer):
         if not self.best_metrics:
             self.best_metrics = metrics
             return False
-        return metrics["accuracy"] > self.best_metrics["accuracy"]
+        else:
+            if metrics["accuracy"] > self.best_metrics["accuracy"]:
+                self.best_metrics = metrics
+                return True
+            else:
+                return False
 
 
 def plot_metrics(log_filepath: str):
