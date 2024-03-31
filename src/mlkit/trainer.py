@@ -10,8 +10,6 @@ from .logger import Logger
 from .metrics_logger import MetricsLogger
 from .utils.ddp_utils import DDPUtils
 
-ddp_utils = DDPUtils()
-
 
 class Trainer:
     def __init__(
@@ -23,7 +21,6 @@ class Trainer:
         checkpoint_every: int,
         optimizer_config: Dict,
         lr_scheduler_config: Dict,
-        dataloader_shuffle: bool = True,
         step_by_epoch: bool = True,
         validate_every: int = 1,
         resume_training: bool = False,
@@ -66,8 +63,9 @@ class Trainer:
 
         self.batch_size = dataloader_batch_size
         self.num_workers = dataloader_num_workers
-        self.dataloader_shuffle = dataloader_shuffle
-
+        self.train_dataset_sampler, self.val_dataset_sampler = (
+            self.build_dataset_sampler()
+        )
         self.train_dataset, self.val_dataset = self.build_dataset()
         self.train_dataloader, self.val_dataloader = self.build_dataloader()
 
@@ -140,18 +138,33 @@ class Trainer:
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
 
+    def build_dataset_sampler(self):
+        train_dataset_sampler, val_dataset_sampler = None, None
+        if self.is_distributed_training:
+            train_dataset_sampler = torch.utils.data.distributed.DistributedSampler(
+                self.train_dataset
+            )
+            val_dataset_sampler = torch.utils.data.distributed.DistributedSampler(
+                self.val_dataset, shuffle=False, drop_last=True
+            )
+        return train_dataset_sampler, val_dataset_sampler
+
     def build_dataloader(self) -> Tuple[DataLoader, DataLoader]:
         train_dataloader = DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            shuffle=self.dataloader_shuffle,
+            pin_memory=True,
+            shuffle=self.train_dataset_sampler is None,
+            sampler=self.train_dataset_sampler,
         )
         val_dataloader = DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            shuffle=self.dataloader_shuffle,
+            pin_memory=True,
+            shuffle=False,
+            sampler=self.val_dataset_sampler,
         )
         return train_dataloader, val_dataloader
 
@@ -263,6 +276,8 @@ class Trainer:
                 "train_step": self.current_train_step,
             }
         )
+        if self.is_distributed_training:
+            self.train_dataset.sampler.set_epoch(self.current_train_epoch)
         self.do_on_train_epoch_start()
 
     def do_on_train_epoch_start(self):

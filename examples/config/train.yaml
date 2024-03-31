@@ -23,7 +23,6 @@ validate_every: 200
 
 dataloader:
   batch_size: 128
-  shuffle: true
   num_workers: 4
 
 learning_rate: 1e-04

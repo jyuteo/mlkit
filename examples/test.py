@@ -53,7 +53,6 @@ class TrainCNN(Trainer):
             train_epochs=cfg.train_epochs,
             dataloader_batch_size=cfg.dataloader.batch_size,
             dataloader_num_workers=cfg.dataloader.num_workers,
-            dataloader_shuffle=cfg.dataloader.shuffle,
             learning_rate=cfg.learning_rate,
             step_by_epoch=cfg.step_by_epoch,
             checkpoint_every=cfg.model_checkpoint.checkpoint_every,
