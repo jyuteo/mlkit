@@ -17,9 +17,9 @@ deterministic:
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 3
+train_epochs: 30
 step_by_epoch: false
-validate_every: 200
+validate_every: 100
 
 dataloader:
   batch_size: 128
@@ -31,7 +31,7 @@ optimizer:
   weight_decay: 0.001
 
 lr_scheduler:
-  step_size: 1000
+  step_size: 2500
   gamma: 0.01
 
 # saves model state dicts throughout training phase at defined steps
