@@ -24,6 +24,8 @@ class TrainerUtils:
                 "If torch_use_deterministic_algorithms is enabled, "
                 "cudnn_backend_deterministic mode should also be enabled"
             )
+            # Set the environment variable to solve underterministic issue in CuBLAS when CUDA >= 10.2  # noqa: E501
+            os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
             torch.use_deterministic_algorithms(True)
             print("PyTorch use deterministic algorithms enabled")
         elif cudnn_backend_deterministic:

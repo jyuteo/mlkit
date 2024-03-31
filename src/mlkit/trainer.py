@@ -4,7 +4,6 @@ import torch
 from typing import List, Dict, Tuple, Any
 from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from .logger import Logger
 from .metrics_logger import MetricsLogger
@@ -61,12 +60,12 @@ class Trainer:
         self.checkpoint_every = checkpoint_every
         self.validate_every = validate_every
 
-        self.batch_size = dataloader_batch_size
-        self.num_workers = dataloader_num_workers
+        self.train_dataset, self.val_dataset = self.build_dataset()
         self.train_dataset_sampler, self.val_dataset_sampler = (
             self.build_dataset_sampler()
         )
-        self.train_dataset, self.val_dataset = self.build_dataset()
+        self.batch_size = dataloader_batch_size
+        self.num_workers = dataloader_num_workers
         self.train_dataloader, self.val_dataloader = self.build_dataloader()
 
         self.model = DDPUtils.move_model_to_device(self.build_model())
@@ -121,7 +120,10 @@ class Trainer:
             map_location = {"cuda:0": f"cuda:{self.rank}"}
         checkpoint = torch.load(checkpoint_path, map_location=map_location)
 
-        self.model.load_state_dict(checkpoint["model"])
+        if self.is_distributed_training:
+            self.model.module.load_state_dict(checkpoint["model"])
+        else:
+            self.model.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         self.current_train_epoch = checkpoint["epoch"]
@@ -133,7 +135,7 @@ class Trainer:
 
     def _set_ddp_barrier(self) -> None:
         if self.is_distributed_training:
-            DDP.set_barrier()
+            DDPUtils.set_barrier()
 
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
@@ -145,7 +147,7 @@ class Trainer:
                 self.train_dataset
             )
             val_dataset_sampler = torch.utils.data.distributed.DistributedSampler(
-                self.val_dataset, shuffle=False, drop_last=True
+                self.val_dataset, shuffle=False, drop_last=False
             )
         return train_dataset_sampler, val_dataset_sampler
 
@@ -207,12 +209,22 @@ class Trainer:
 
     def _do_on_train_step_end(self):
         self._set_ddp_barrier()
+        train_step_losses = DDPUtils.all_gather_tensors(self.train_step_results["loss"])
+        if self.is_master_process:
+            self.metrics_logger.log(
+                "train",
+                {
+                    "train_step": self.current_train_step,
+                    "lr": self.optimizer.param_groups[0]["lr"],
+                    "loss": torch.mean(train_step_losses),
+                },
+            )
         if not self.step_by_epoch and self.is_master_process:
             if self.current_train_step % self.checkpoint_every == 0:
                 self.save_model_state_dicts()
-            if self.current_train_step % self.validate_every == 0:
-                self._run_validation_epoch()
             self.save_model_snapshot()
+        if self.current_train_step % self.validate_every == 0:
+            self._run_validation_epoch()
         self.do_on_train_step_end()
 
     def do_on_train_step_end(self):
@@ -222,12 +234,14 @@ class Trainer:
         raise NotImplementedError
 
     def _do_on_validation_step_start(self):
+        self._set_ddp_barrier()
         self.do_on_validation_step_start()
 
     def do_on_validation_step_start(self):
         pass
 
     def _do_on_validation_step_end(self):
+        self._set_ddp_barrier()
         self.do_on_validation_step_end()
 
     def do_on_validation_step_end(self):
@@ -277,7 +291,7 @@ class Trainer:
             }
         )
         if self.is_distributed_training:
-            self.train_dataset.sampler.set_epoch(self.current_train_epoch)
+            self.train_dataset_sampler.set_epoch(self.current_train_epoch)
         self.do_on_train_epoch_start()
 
     def do_on_train_epoch_start(self):
@@ -287,9 +301,9 @@ class Trainer:
         if self.step_by_epoch and self.is_master_process:
             if self.current_train_epoch % self.checkpoint_every == 0:
                 self.save_model_state_dicts()
-            if self.current_train_epoch % self.validate_every == 0:
-                self._run_validation_epoch()
             self.save_model_snapshot()
+        if self.current_train_epoch % self.validate_every == 0:
+            self._run_validation_epoch()
         self.do_on_train_epoch_end()
 
     def do_on_train_epoch_end(self):
@@ -302,6 +316,7 @@ class Trainer:
         with torch.no_grad():
             for batch in self.val_dataloader:
                 self._do_on_validation_step_start()
+                batch = DDPUtils.move_tensor_or_tuple_of_tensors_to_device(batch)
                 result = self.validation_step(batch)
                 if result:
                     self.validation_step_results_for_an_epoch.append(result)
@@ -310,7 +325,6 @@ class Trainer:
         self._do_on_validation_epoch_end()
 
     def _do_on_validation_epoch_start(self):
-        self._set_ddp_barrier()
         self.validation_step_results_for_an_epoch = list()
         self.logger.debug(
             {
@@ -325,7 +339,6 @@ class Trainer:
         pass
 
     def _do_on_validation_epoch_end(self):
-        self._set_ddp_barrier()
         self.do_on_validation_epoch_end()
 
     def do_on_validation_epoch_end(self):
@@ -334,7 +347,8 @@ class Trainer:
     def train(self):
         for _ in range(self.current_train_epoch + 1, self.train_epochs + 1):
             self._run_train_epoch()
-        self._delete_model_snapshot()
+        if self.is_master_process:
+            self._delete_model_snapshot()
 
     def save_model_state_dicts(
         self,

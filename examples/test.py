@@ -1,8 +1,9 @@
 # Description   : An example for training a CNN model using the MLKit framework
 # Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 test.py  # noqa: E501
 
-import json
+import os
 import hydra
+import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -100,35 +101,56 @@ class TrainCNN(Trainer):
             "pred": pred,
         }
 
-    def do_on_train_step_end(self) -> None:
-        self.metrics_logger.log(
-            "train",
-            {
-                "train_step": self.current_train_step,
-                "lr": self.optimizer.param_groups[0]["lr"],
-                **self.train_step_results,
-            },
-        )
-
     def do_on_validation_epoch_end(self) -> None:
         self.logger.debug("Validation done. Calculating validation metrics")
 
+        all_validation_step_results_for_an_epoch = DDPUtils.all_gather_objects(
+            self.validation_step_results_for_an_epoch
+        )
+
+        if not self.is_master_process:
+            return
+
         total_loss = 0.0
         total_correct = 0.0
-        total_samples = 0
+        total_data = 0
 
-        for step_result in self.validation_step_results_for_an_epoch:
-            target = step_result["label"]
-            output = step_result["output"]
-            pred = step_result["pred"]
+        for i in range(len(all_validation_step_results_for_an_epoch[0])):
+            label = torch.tensor([], dtype=torch.int64, device=DDPUtils.get_device())
+            output = torch.tensor([], device=DDPUtils.get_device())
+            pred = torch.tensor([], device=DDPUtils.get_device())
+            for j in range(len(all_validation_step_results_for_an_epoch)):
+                label = torch.cat(
+                    (
+                        label,
+                        all_validation_step_results_for_an_epoch[j][i]["label"].to(
+                            device=DDPUtils.get_device()
+                        ),
+                    )
+                )
+                output = torch.cat(
+                    (
+                        output,
+                        all_validation_step_results_for_an_epoch[j][i]["output"].to(
+                            device=DDPUtils.get_device()
+                        ),
+                    )
+                )
+                pred = torch.cat(
+                    (
+                        pred,
+                        all_validation_step_results_for_an_epoch[j][i]["pred"].to(
+                            device=DDPUtils.get_device()
+                        ),
+                    )
+                )
 
-            loss = F.cross_entropy(output, target)
-            total_loss += loss.item() * target.size(0)
-            total_samples += target.size(0)
-            total_correct += torch.sum(pred == target)
+            total_loss += F.cross_entropy(output, label).item() * label.size(0)
+            total_correct += torch.sum(pred == label).item()
+            total_data += label.size(0)
 
-        epoch_loss = total_loss / total_samples
-        epoch_accuracy = total_correct.item() / total_samples
+        epoch_loss = total_loss / total_data
+        epoch_accuracy = total_correct / total_data
 
         results = {
             "train_epoch": self.current_train_epoch,
@@ -139,7 +161,7 @@ class TrainCNN(Trainer):
         self.logger.log({"msg": "Validation results", **results})
         self.metrics_logger.log("val", results)
 
-        if self.is_best_model(results):
+        if self.is_master_process and self.is_best_model(results):
             self.save_best_model_state_dicts()
 
     def is_best_model(self, metrics: Dict) -> bool:
@@ -192,7 +214,7 @@ def plot_metrics(log_filepath: str):
     ax4.set_title("Learning Rate")
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(os.path.join(os.path.dirname(log_filepath), "metrics.png"))
 
 
 @hydra.main(config_path="config", config_name="train", version_base=None)
