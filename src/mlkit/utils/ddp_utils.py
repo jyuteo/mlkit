@@ -1,6 +1,7 @@
 import os
 import torch
 
+from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from typing import Union, Tuple, List
 
@@ -101,7 +102,9 @@ class DDPUtils:
         )
 
     @staticmethod
-    def all_gather_tensors(tensor: torch.Tensor) -> torch.Tensor:
+    def all_gather_tensors(
+        tensor: torch.Tensor, sync_grad: bool = False
+    ) -> torch.Tensor:
         """
         Gathers all tensors from all processes and concatenates them
         """
@@ -112,6 +115,9 @@ class DDPUtils:
             tensor = tensor.unsqueeze(0)
         tensor_list = [torch.zeros_like(tensor) for _ in range(world_size)]
         torch.distributed.all_gather(tensor_list, tensor)
+        if sync_grad:
+            local_rank = DDPUtils.get_rank()
+            tensor_list[local_rank] = tensor
         return torch.cat(tensor_list, dim=0)
 
     @staticmethod
@@ -125,3 +131,19 @@ class DDPUtils:
         obj_list = [None for _ in range(world_size)]
         torch.distributed.all_gather_object(obj_list, obj)
         return obj_list
+
+
+class NoDuplicateDistributedSampler(DistributedSampler):
+    """
+    A distributed sampler that doesn't add duplicates.
+    Arguments are the same as DistributedSampler
+    Refer to https://github.com/pytorch/pytorch/issues/25162#issuecomment-1227647626
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.drop_last and len(self.dataset) % self.num_replicas != 0:
+            # Some ranks may have fewer samples, that's fine
+            if self.rank >= len(self.dataset) % self.num_replicas:
+                self.num_samples -= 1
+            self.total_size = len(self.dataset)

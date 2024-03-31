@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from .logger import Logger
 from .metrics_logger import MetricsLogger
-from .utils.ddp_utils import DDPUtils
+from .utils.ddp_utils import DDPUtils, NoDuplicateDistributedSampler
 
 
 class Trainer:
@@ -25,7 +25,7 @@ class Trainer:
         resume_training: bool = False,
         resume_training_model_state_dict_path: str = "",
         experiment_log_dir: str = "./logs",
-        metrics_log_filepath: str = "./logs/metrics_log.json",
+        metrics_log_dir: str = "./logs",
         model_checkpoint_dir: str = "./checkpoints",
         model_snapshot_path: str = "./snapshot.t7",
         **kwargs,
@@ -80,9 +80,12 @@ class Trainer:
         self.train_step_results: Dict = dict()
         self.validation_step_results_for_an_epoch: List[Dict] = list()
 
-        self.metrics_logger = (
-            MetricsLogger(metrics_log_filepath) if self.is_master_process else None
+        dir = Path(metrics_log_dir)
+        dir.mkdir(parents=True, exist_ok=True)
+        metrics_log_filepath = os.path.join(
+            metrics_log_dir, f"metrics_log.device_{DDPUtils.get_device()}.json"
         )
+        self.metrics_logger = MetricsLogger(metrics_log_filepath)
 
         self.model_checkpoint_dir = model_checkpoint_dir
         dir = Path(self.model_checkpoint_dir)
@@ -140,14 +143,14 @@ class Trainer:
     def build_dataset(self) -> Tuple[Dataset, Dataset]:
         raise NotImplementedError
 
-    def build_dataset_sampler(self):
+    def build_dataset_sampler(
+        self,
+    ) -> Tuple[NoDuplicateDistributedSampler, NoDuplicateDistributedSampler]:
         train_dataset_sampler, val_dataset_sampler = None, None
         if self.is_distributed_training:
-            train_dataset_sampler = torch.utils.data.distributed.DistributedSampler(
-                self.train_dataset
-            )
-            val_dataset_sampler = torch.utils.data.distributed.DistributedSampler(
-                self.val_dataset, shuffle=False, drop_last=False
+            train_dataset_sampler = NoDuplicateDistributedSampler(self.train_dataset)
+            val_dataset_sampler = NoDuplicateDistributedSampler(
+                self.val_dataset, shuffle=False
             )
         return train_dataset_sampler, val_dataset_sampler
 
@@ -392,7 +395,11 @@ class Trainer:
         torch.save(state, path)
 
     def save_best_model_state_dicts(self):
+        if not self.is_master_process:
+            return
         self.save_model_state_dicts(is_best=True)
 
     def save_model_snapshot(self):
+        if not self.is_master_process:
+            return
         self.save_model_state_dicts(is_snapshot=True)
