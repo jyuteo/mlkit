@@ -43,14 +43,20 @@ class Trainer:
             experiment_log_dir, f"train_log.device_{DDPUtils.get_device()}.json"
         )
         self.logger = Logger(experiment_log_filepath)
-        self.metrics_logger = MetricsLogger(metrics_log_filepath)
-
         self.logger.log({"msg": "Config", **config})
 
         self.rank = DDPUtils.get_rank()
         self.is_distributed_training = self.rank is not None
         self.is_master_process = (
             not self.is_distributed_training or DDPUtils.is_master_process()
+        )
+        self.logger.log(
+            {
+                "msg": "Distributed training",
+                "is_distributed_training": self.is_distributed_training,
+                "is_master_process": self.is_master_process,
+                "rank": self.rank,
+            }
         )
 
         self.train_epochs = train_epochs
@@ -76,6 +82,10 @@ class Trainer:
 
         self.train_step_results: Dict = dict()
         self.validation_step_results_for_an_epoch: List[Dict] = list()
+
+        self.metrics_logger = (
+            MetricsLogger(metrics_log_filepath) if self.is_master_process else None
+        )
 
         self.model_checkpoint_dir = model_checkpoint_dir
         dir = Path(self.model_checkpoint_dir)
@@ -107,8 +117,12 @@ class Trainer:
         assert os.path.exists(
             checkpoint_path
         ), f"Checkpoint path does not exist: {checkpoint_path}"
-        print(checkpoint_path)
-        checkpoint = torch.load(checkpoint_path)
+
+        map_location = None
+        if self.is_distributed_training:
+            map_location = {"cuda:0": f"cuda:{self.rank}"}
+        checkpoint = torch.load(checkpoint_path, map_location=map_location)
+
         self.model.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
@@ -152,7 +166,7 @@ class Trainer:
 
     def build_lr_scheduler(
         self,
-        step_size: int = 30,
+        step_size: int,
         gamma: float = 0.1,
         **kwargs,
     ) -> torch.optim.lr_scheduler.LRScheduler:
@@ -185,7 +199,7 @@ class Trainer:
                 self.save_model_state_dicts()
             if self.current_train_step % self.validate_every == 0:
                 self._run_validation_epoch()
-        self.save_model_snapshot()
+            self.save_model_snapshot()
         self.do_on_train_step_end()
 
     def do_on_train_step_end(self):
@@ -260,6 +274,7 @@ class Trainer:
                 self.save_model_state_dicts()
             if self.current_train_epoch % self.validate_every == 0:
                 self._run_validation_epoch()
+            self.save_model_snapshot()
         self.do_on_train_epoch_end()
 
     def do_on_train_epoch_end(self):
@@ -311,13 +326,15 @@ class Trainer:
         is_snapshot: bool = False,
         is_best: bool = False,
     ):
-        if not is_snapshot:
-            assert self.is_master_process, "Only master process can save the model"
-
+        assert self.is_master_process, "Only save model state dicts in master process"
         state = {
             "epoch": self.current_train_epoch,
             "step": self.current_train_step,
-            "model": self.model.state_dict(),
+            "model": (
+                self.model.module.state_dict()
+                if self.is_distributed_training
+                else self.model.state_dict()
+            ),
             "optimizer": self.optimizer.state_dict(),
             "lr_scheduler": self.lr_scheduler.state_dict(),
         }
