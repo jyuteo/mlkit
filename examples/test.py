@@ -61,7 +61,7 @@ class TrainCNN(Trainer):
             optimizer_config=cfg.optimizer,
             lr_scheduler_config=cfg.lr_scheduler,
             experiment_log_dir=cfg.log.experiment_log_dir,
-            metrics_log_filepath=cfg.log.metrics_log_path,
+            metrics_log_dir=cfg.log.metrics_log_dir,
             model_checkpoint_dir=cfg.model_checkpoint.save_dir,
             model_snapshot_path=cfg.model_snapshot.save_path,
             resume_training=cfg.resume_training.enabled,
@@ -104,50 +104,30 @@ class TrainCNN(Trainer):
     def do_on_validation_epoch_end(self) -> None:
         self.logger.debug("Validation done. Calculating validation metrics")
 
-        all_validation_step_results_for_an_epoch = DDPUtils.all_gather_objects(
-            self.validation_step_results_for_an_epoch
-        )
+        label = [
+            step_output["label"]
+            for step_output in self.validation_step_results_for_an_epoch
+        ]
+        output = [
+            step_output["output"]
+            for step_output in self.validation_step_results_for_an_epoch
+        ]
+        pred = [
+            step_output["pred"]
+            for step_output in self.validation_step_results_for_an_epoch
+        ]
 
-        if not self.is_master_process:
-            return
+        label = torch.cat(label, dim=0)
+        output = torch.cat(output, dim=0)
+        pred = torch.cat(pred, dim=0)
 
-        total_loss = 0.0
-        total_correct = 0.0
-        total_data = 0
+        label = DDPUtils.all_gather_tensors(label)
+        output = DDPUtils.all_gather_tensors(output)
+        pred = DDPUtils.all_gather_tensors(pred)
 
-        for i in range(len(all_validation_step_results_for_an_epoch[0])):
-            label = torch.tensor([], dtype=torch.int64, device=DDPUtils.get_device())
-            output = torch.tensor([], device=DDPUtils.get_device())
-            pred = torch.tensor([], device=DDPUtils.get_device())
-            for j in range(len(all_validation_step_results_for_an_epoch)):
-                label = torch.cat(
-                    (
-                        label,
-                        all_validation_step_results_for_an_epoch[j][i]["label"].to(
-                            device=DDPUtils.get_device()
-                        ),
-                    )
-                )
-                output = torch.cat(
-                    (
-                        output,
-                        all_validation_step_results_for_an_epoch[j][i]["output"].to(
-                            device=DDPUtils.get_device()
-                        ),
-                    )
-                )
-                pred = torch.cat(
-                    (
-                        pred,
-                        all_validation_step_results_for_an_epoch[j][i]["pred"].to(
-                            device=DDPUtils.get_device()
-                        ),
-                    )
-                )
-
-            total_loss += F.cross_entropy(output, label).item() * label.size(0)
-            total_correct += torch.sum(pred == label).item()
-            total_data += label.size(0)
+        total_loss = F.cross_entropy(output, label).item() * label.size(0)
+        total_correct = torch.sum(pred == label).item()
+        total_data = label.size(0)
 
         epoch_loss = total_loss / total_data
         epoch_accuracy = total_correct / total_data
@@ -158,10 +138,11 @@ class TrainCNN(Trainer):
             "loss": epoch_loss,
             "accuracy": epoch_accuracy,
         }
+
         self.logger.log({"msg": "Validation results", **results})
         self.metrics_logger.log("val", results)
 
-        if self.is_master_process and self.is_best_model(results):
+        if self.is_best_model(results):
             self.save_best_model_state_dicts()
 
     def is_best_model(self, metrics: Dict) -> bool:
@@ -230,7 +211,7 @@ def main(cfg: DictConfig) -> None:
         trainer = TrainCNN(cfg)
         trainer.train()
 
-    plot_metrics(cfg.log.metrics_log_path)
+    plot_metrics(os.path.join(cfg.log.metrics_log_dir, "metrics_log.device_0.json"))
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ hydra:
 
 log:
   experiment_log_dir: ./logs
-  metrics_log_path: ./logs/metrics_log.json
+  metrics_log_dir: ./logs
 
 deterministic:
   random_seed: 1234
