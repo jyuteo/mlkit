@@ -2,7 +2,7 @@ import os
 import torch
 
 from torch.nn.parallel import DistributedDataParallel as DDP
-from typing import Union, Tuple
+from typing import Union, Tuple, List
 
 
 class DDPUtils:
@@ -33,7 +33,6 @@ class DDPUtils:
 
         if DDPUtils.is_cuda_available():
             return int(os.environ["LOCAL_RANK"])
-            # return torch.distributed.get_rank()
         return None
 
     @staticmethod
@@ -43,6 +42,7 @@ class DDPUtils:
         """
         if DDPUtils.is_cuda_available():
             return torch.distributed.get_world_size()
+        return 0
 
     @staticmethod
     def is_master_process():
@@ -99,3 +99,29 @@ class DDPUtils:
         raise TypeError(
             f"Expected type torch.Tensor or a tuple of torch.Tensor but got {type(data)}"
         )
+
+    @staticmethod
+    def all_gather_tensors(tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Gathers all tensors from all processes and concatenates them
+        """
+        world_size = DDPUtils.get_world_size()
+        if world_size <= 1:
+            return tensor
+        if tensor.ndim == 0:
+            tensor = tensor.unsqueeze(0)
+        tensor_list = [torch.zeros_like(tensor) for _ in range(world_size)]
+        torch.distributed.all_gather(tensor_list, tensor)
+        return torch.cat(tensor_list, dim=0)
+
+    @staticmethod
+    def all_gather_objects(obj: object) -> List[object]:
+        """
+        Gathers all objects from all processes and concatenates them
+        """
+        world_size = DDPUtils.get_world_size()
+        if world_size <= 1:
+            return [obj]
+        obj_list = [None for _ in range(world_size)]
+        torch.distributed.all_gather_object(obj_list, obj)
+        return obj_list
