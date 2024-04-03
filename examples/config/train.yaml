@@ -8,16 +8,25 @@ hydra:
   run:
     dir: .
 
+env_vars_file_path: .env
+
 log:
   experiment_log_dir: ./logs
   metrics_log_dir: ./logs
+
+wandb:
+  enabled: true
+  project: test_project
+  group: test_group
+  tags: ["test"]
+  save_code: true
 
 deterministic:
   random_seed: 1234
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 30
+train_epochs: 3
 step_by_epoch: false
 validate_every: 100
 

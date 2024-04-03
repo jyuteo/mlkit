@@ -3,3 +3,5 @@ hydra-core
 torch
 torchvision
 matplotlib
+wandb
+python-dotenv

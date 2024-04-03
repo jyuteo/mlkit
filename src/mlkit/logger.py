@@ -54,10 +54,12 @@ class Logger:
     def __init__(
         self,
         log_filepath: str,
+        is_master_log: bool = True,
         stream_log_level: int = logging.INFO,
         file_log_level: int = logging.DEBUG,
     ) -> None:
         self.log_filepath = log_filepath
+        self.is_master_log = is_master_log
         self.stream_log_level = stream_log_level
         self.file_log_level = file_log_level
         self.logger = self._init_logger()
@@ -80,7 +82,8 @@ class Logger:
         sh.setFormatter(json_formatter)
         fh.setFormatter(json_formatter)
 
-        logger.addHandler(sh)
+        if self.is_master_log:
+            logger.addHandler(sh)
         logger.addHandler(fh)
 
         return logger

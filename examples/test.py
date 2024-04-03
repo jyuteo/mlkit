@@ -51,6 +51,8 @@ class TrainCNN(Trainer):
         **kwargs,
     ):
         super().__init__(
+            env_vars_file_path=cfg.env_vars_file_path,
+            wandb_config=cfg.wandb,
             train_epochs=cfg.train_epochs,
             dataloader_batch_size=cfg.dataloader.batch_size,
             dataloader_num_workers=cfg.dataloader.num_workers,
@@ -101,7 +103,7 @@ class TrainCNN(Trainer):
             "pred": pred,
         }
 
-    def do_on_validation_epoch_end(self) -> None:
+    def do_on_validation_epoch_end(self) -> Dict:
         self.logger.debug("Validation done. Calculating validation metrics")
 
         label = [
@@ -133,17 +135,14 @@ class TrainCNN(Trainer):
         epoch_accuracy = total_correct / total_data
 
         results = {
-            "train_epoch": self.current_train_epoch,
-            "train_step": self.current_train_step,
             "loss": epoch_loss,
             "accuracy": epoch_accuracy,
         }
 
-        self.logger.log({"msg": "Validation results", **results})
-        self.metrics_logger.log("val", results)
-
         if self.is_best_model(results):
             self.save_best_model_state_dicts()
+
+        return results
 
     def is_best_model(self, metrics: Dict) -> bool:
         if not self.best_metrics:
@@ -216,7 +215,8 @@ def main(cfg: DictConfig) -> None:
         trainer = TrainCNN(cfg)
         trainer.train()
 
-    plot_metrics(os.path.join(cfg.log.metrics_log_dir, "metrics_log.device_0.json"))
+    log_file_name = f"metrics_log.device_{DDPUtils.get_device()}.json"
+    plot_metrics(os.path.join(cfg.log.metrics_log_dir, log_file_name))
 
 
 if __name__ == "__main__":
