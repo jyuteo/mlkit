@@ -1,18 +1,22 @@
 import os
 import torch
 
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
+from dotenv import load_dotenv
 
 from .logger import Logger
 from .metrics_logger import MetricsLogger
+from .wandb_logger import WandBLogger
 from .utils.ddp_utils import DDPUtils, NoDuplicateDistributedSampler
 
 
 class Trainer:
     def __init__(
         self,
+        env_vars_file_path: str,
+        wandb_config: Dict,
         train_epochs: int,
         dataloader_batch_size: int,
         dataloader_num_workers: int,
@@ -31,21 +35,23 @@ class Trainer:
         **kwargs,
     ):
         config = locals()
-        config.pop("self")
 
-        dir = Path(experiment_log_dir)
-        dir.mkdir(parents=True, exist_ok=True)
-        experiment_log_filepath = os.path.join(
-            experiment_log_dir, f"train_log.device_{DDPUtils.get_device()}.json"
-        )
-        self.logger = Logger(experiment_log_filepath)
-        self.logger.log({"msg": "Config", **config})
+        self._load_update_env_variables(env_vars_file_path)
 
+        # distributed training information
         self.rank = DDPUtils.get_rank()
         self.is_distributed_training = self.rank is not None
         self.is_master_process = (
             not self.is_distributed_training or DDPUtils.is_master_process()
         )
+
+        # setup experiment logger
+        dir = Path(experiment_log_dir)
+        dir.mkdir(parents=True, exist_ok=True)
+        experiment_log_filepath = os.path.join(
+            experiment_log_dir, f"train_log.device_{DDPUtils.get_device()}.json"
+        )
+        self.logger = Logger(experiment_log_filepath, self.is_master_process)
         self.logger.log(
             {
                 "msg": "Distributed training",
@@ -80,6 +86,11 @@ class Trainer:
         self.train_step_results: Dict = dict()
         self.validation_step_results_for_an_epoch: List[Dict] = list()
 
+        # update config
+        config = self._update_config(config)
+        self.logger.log({"msg": "Config", **config})
+
+        # setup metrics logger
         dir = Path(metrics_log_dir)
         dir.mkdir(parents=True, exist_ok=True)
         metrics_log_filepath = os.path.join(
@@ -87,6 +98,19 @@ class Trainer:
         )
         self.metrics_logger = MetricsLogger(metrics_log_filepath)
 
+        # setup wandb
+        self.wandb_logger = None
+        if wandb_config.enabled:
+            self.wandb_logger = WandBLogger(
+                is_master_process=self.is_master_process,
+                logger=self.logger,
+                config=config,
+                **wandb_config,
+            )
+            if self.wandb_logger.login():
+                self.wandb_logger.start()
+
+        # check whether to resume training from snapshot or given checkpoint
         self.model_checkpoint_dir = model_checkpoint_dir
         dir = Path(self.model_checkpoint_dir)
         dir.mkdir(parents=True, exist_ok=True)
@@ -112,6 +136,21 @@ class Trainer:
                     "train_step": self.current_train_step,
                 }
             )
+
+    def _load_update_env_variables(self, env_vars_file_path: str):
+        load_dotenv(env_vars_file_path, override=True)
+
+    def _update_config(self, config: Dict) -> Dict:
+        config.pop("self")
+        config.pop("wandb_config")
+        config.update(
+            {
+                "model_class": self.model.__class__.__name__,
+                "optimizer_class": self.optimizer.__class__.__name__,
+                "lr_scheduler": self.lr_scheduler.__class__.__name__,
+            }
+        )
+        return config
 
     def _load_state_dicts_to_resume_training(self, checkpoint_path: str):
         assert os.path.exists(
@@ -205,7 +244,7 @@ class Trainer:
                     "train_step": self.current_train_step,
                 }
             )
-        self.do_on_train_step_start()
+        return self.do_on_train_step_start()
 
     def do_on_train_step_start(self):
         pass
@@ -222,30 +261,41 @@ class Trainer:
                     "loss": torch.mean(train_step_losses),
                 },
             )
+            self.log_wandb_metrics(
+                category="train",
+                metrics={
+                    "loss": torch.mean(train_step_losses),
+                    "lr": self.optimizer.param_groups[0]["lr"],
+                },
+            )
         if not self.step_by_epoch and self.is_master_process:
             if self.current_train_step % self.checkpoint_every == 0:
                 self.save_model_state_dicts()
             self.save_model_snapshot()
         if self.current_train_step % self.validate_every == 0:
             self._run_validation_epoch()
-        self.do_on_train_step_end()
+        return self.do_on_train_step_end()
 
     def do_on_train_step_end(self):
         pass
 
-    def validation_step(self, batch_data: Any) -> Dict:
+    def validation_step(self, batch_data: Any) -> Optional[Dict]:
+        """
+        Return value will be appened to self.validation_step_results_for_an_epoch,
+        and can be used to calculate validation metrics for the a validation epoch in later step
+        """
         raise NotImplementedError
 
     def _do_on_validation_step_start(self):
         self._set_ddp_barrier()
-        self.do_on_validation_step_start()
+        return self.do_on_validation_step_start()
 
     def do_on_validation_step_start(self):
         pass
 
     def _do_on_validation_step_end(self):
         self._set_ddp_barrier()
-        self.do_on_validation_step_end()
+        return self.do_on_validation_step_end()
 
     def do_on_validation_step_end(self):
         pass
@@ -307,7 +357,7 @@ class Trainer:
             self.save_model_snapshot()
         if self.current_train_epoch % self.validate_every == 0:
             self._run_validation_epoch()
-        self.do_on_train_epoch_end()
+        return self.do_on_train_epoch_end()
 
     def do_on_train_epoch_end(self):
         pass
@@ -325,7 +375,13 @@ class Trainer:
                     self.validation_step_results_for_an_epoch.append(result)
                 self._do_on_validation_step_end()
 
-        self._do_on_validation_epoch_end()
+        epoch_result = self._do_on_validation_epoch_end()
+        if epoch_result:
+            self.logger.log({"msg": "Validation results", **epoch_result})
+            self.metrics_logger.log(
+                "val", {"train_step": self.current_train_step, **epoch_result}
+            )
+            self.log_wandb_metrics(category="val", metrics=epoch_result)
 
     def _do_on_validation_epoch_start(self):
         self.validation_step_results_for_an_epoch = list()
@@ -336,15 +392,22 @@ class Trainer:
                 "train_step": self.current_train_step,
             }
         )
-        self.do_on_validation_epoch_start()
+        return self.do_on_validation_epoch_start()
 
     def do_on_validation_epoch_start(self):
         pass
 
-    def _do_on_validation_epoch_end(self):
-        self.do_on_validation_epoch_end()
+    def _do_on_validation_epoch_end(self) -> Optional[Dict]:
+        return self.do_on_validation_epoch_end()
 
-    def do_on_validation_epoch_end(self):
+    def do_on_validation_epoch_end(self) -> Optional[Dict]:
+        """
+        Calculate and return metrics for the entire validation epoch.
+        Return values will be logged if wandb logger is enabled.
+
+        Returns:
+            Dict: A dictionary consisting of metric name and values pairs
+        """
         pass
 
     def train(self):
@@ -403,3 +466,6 @@ class Trainer:
         if not self.is_master_process:
             return
         self.save_model_state_dicts(is_snapshot=True)
+
+    def log_wandb_metrics(self, metrics: Dict, category: str = ""):
+        self.wandb_logger.log_metrics(metrics, self.current_train_step, category)

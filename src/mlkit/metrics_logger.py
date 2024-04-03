@@ -1,8 +1,6 @@
 import torch
 import json
 
-from .utils.ddp_utils import DDPUtils
-
 
 class MetricsLogger:
     """
@@ -41,7 +39,8 @@ class MetricsLogger:
         }
     """  # noqa: E501
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, is_master_process: bool = True):
+        self.is_master_process = is_master_process
         self.file_path = file_path
         self._data = {}
         self._save_data()
@@ -82,7 +81,7 @@ class MetricsLogger:
             json.dump(self._data, file, indent=4)
 
     def log(self, section, value):
-        if not DDPUtils.is_master_process():
+        if not self.is_master_process:
             return
 
         if section not in self._data:
