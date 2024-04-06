@@ -63,7 +63,7 @@ class TrainCNN(Trainer):
             optimizer_config=cfg.optimizer,
             lr_scheduler_config=cfg.lr_scheduler,
             experiment_log_dir=cfg.log.experiment_log_dir,
-            metrics_log_dir=cfg.log.metrics_log_dir,
+            metrics_log_path=cfg.log.metrics_log_path,
             model_checkpoint_dir=cfg.model_checkpoint.save_dir,
             model_snapshot_path=cfg.model_snapshot.save_path,
             resume_training=cfg.resume_training.enabled,
@@ -217,8 +217,7 @@ def main(cfg: DictConfig) -> None:
         trainer = TrainCNN(cfg)
         trainer.train()
 
-    log_file_name = f"metrics_log.device_{DDPUtils.get_device()}.json"
-    plot_metrics(os.path.join(cfg.log.metrics_log_dir, log_file_name))
+    plot_metrics(cfg.log.metrics_log_path)
 
 
 if __name__ == "__main__":

@@ -6,11 +6,9 @@ from typing import List, Dict, Optional, Union
 
 from .logger import Logger
 
-WANDB_ENABLED = False
-
 
 class WandBLogger:
-    REQUIRED_ENV_VARS = ["WANDB_API_KEY"]
+    REQUIRED_ENV_VARS = ["WANDB_HOST", "WANDB_API_KEY"]
     WANDB_TABLE_MAX_ROW = 2000
 
     def __init__(
@@ -37,18 +35,13 @@ class WandBLogger:
         self.config = config
         self.entity = entity
         self.save_code = save_code
+        self._is_enabled = False
 
     def _disable_wandb(self, msg: str = None):
         if not self.is_master_process:
             return
-        global WANDB_ENABLED
-        WANDB_ENABLED = False
+        self._is_enabled = False
         self.logger.info(f'WANDB is disabled {f": {msg}" if msg is not None else ""}')
-
-    def _is_enabled(self):
-        if not self.is_master_process:
-            return
-        return WANDB_ENABLED
 
     def login(self) -> bool:
         if not self.is_master_process:
@@ -60,6 +53,9 @@ class WandBLogger:
             return False
         success = wandb.login(
             key=os.environ["WANDB_API_KEY"],
+            host=os.environ["WANDB_HOST"],
+            relogin=True,
+            force=True,
         )
         if not success:
             WandBLogger._disable_wandb("Login failed")
@@ -81,8 +77,7 @@ class WandBLogger:
             save_code=self.save_code,
             force=True,
         )
-        global WANDB_ENABLED
-        WANDB_ENABLED = True
+        self._is_enabled = True
         self.logger.info(
             f"WANDB run starting with id {wandb.run.id} and name {wandb.run.name}."
         )
@@ -96,7 +91,7 @@ class WandBLogger:
     def log(self, *args, **kwargs):
         if not self.is_master_process:
             return
-        if self._is_enabled():
+        if self._is_enabled:
             return wandb.log(*args, **kwargs)
 
     def log_metrics(self, metrics: Dict, step: int, category: str = ""):

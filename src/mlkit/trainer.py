@@ -31,14 +31,12 @@ class Trainer:
         resume_training: bool = False,
         resume_training_model_state_dict_path: str = "",
         experiment_log_dir: str = "./logs",
-        metrics_log_dir: str = "./logs",
+        metrics_log_path: str = "./logs/metrics_log.json",
         model_checkpoint_dir: str = "./checkpoints",
         model_snapshot_path: str = "./snapshot.t7",
         **kwargs,
     ):
         config = locals()
-
-        self._load_update_env_variables(env_vars_file_path)
 
         # distributed training information
         self.rank = DDPUtils.get_rank()
@@ -62,6 +60,8 @@ class Trainer:
                 "rank": self.rank,
             }
         )
+
+        self._load_update_env_variables(env_vars_file_path)
 
         self.train_epochs = train_epochs
         self.step_by_epoch = step_by_epoch
@@ -91,12 +91,7 @@ class Trainer:
         config = self._update_config(config)
         self.logger.log({"msg": "Config", **config})
 
-        dir = Path(metrics_log_dir)
-        dir.mkdir(parents=True, exist_ok=True)
-        metrics_log_filepath = os.path.join(
-            metrics_log_dir, f"metrics_log.device_{DDPUtils.get_device()}.json"
-        )
-        self.metrics_logger = MetricsLogger(metrics_log_filepath)
+        self.metrics_logger = MetricsLogger(metrics_log_path)
 
         self.wandb_logger = None
         if wandb_config.enabled:
@@ -141,6 +136,9 @@ class Trainer:
 
     def _load_update_env_variables(self, env_vars_file_path: str):
         load_dotenv(env_vars_file_path, override=True)
+        self.logger.info(
+            f"Loaded and updated environment variables from {env_vars_file_path}"
+        )
 
     def _update_config(self, config: Dict) -> Dict:
         config.pop("self")
@@ -450,9 +448,13 @@ class Trainer:
         self.save_model_state_dicts(is_snapshot=True)
 
     def log_wandb_metrics(self, metrics: Dict, category: str = "") -> None:
+        if not self.wandb_logger:
+            return
         self.wandb_logger.log_metrics(metrics, self.current_train_step, category)
 
     def log_wandb_table(
         self, table: Union[wandb.Table, pd.DataFrame], table_name: str
     ) -> None:
-        self.wandb_logger.log_table(self, table, table_name)
+        if not self.wandb_logger:
+            return
+        self.wandb_logger.log_table(table, table_name)

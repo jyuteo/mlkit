@@ -45,6 +45,9 @@ class MetricsLogger:
         self.is_master_process = is_master_process
         self.file_path = file_path
         self._data = {}
+
+        if not self.is_master_process:
+            return
         self._save_data()
 
     def _load_data(self):
