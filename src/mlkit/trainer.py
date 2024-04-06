@@ -38,14 +38,12 @@ class Trainer:
     ):
         config = locals()
 
-        # distributed training information
         self.rank = DDPUtils.get_rank()
         self.is_distributed_training = self.rank is not None
         self.is_master_process = (
             not self.is_distributed_training or DDPUtils.is_master_process()
         )
 
-        # setup experiment logger
         dir = Path(experiment_log_dir)
         dir.mkdir(parents=True, exist_ok=True)
         experiment_log_filepath = os.path.join(
