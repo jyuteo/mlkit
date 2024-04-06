@@ -1,6 +1,8 @@
 import torch
 import json
 
+from typing import Dict
+
 
 class MetricsLogger:
     """
@@ -43,6 +45,9 @@ class MetricsLogger:
         self.is_master_process = is_master_process
         self.file_path = file_path
         self._data = {}
+
+        if not self.is_master_process:
+            return
         self._save_data()
 
     def _load_data(self):
@@ -80,15 +85,20 @@ class MetricsLogger:
         with open(self.file_path, "w") as file:
             json.dump(self._data, file, indent=4)
 
-    def log(self, section, value):
+    def log(self, metrics: Dict, step: int, section: str = ""):
         if not self.is_master_process:
             return
+
+        if not section:
+            section = "general"
 
         if section not in self._data:
             self._data[section] = []
 
-        if not self._is_json_serializable(value):
-            value = self._convert_to_serializable(value)
+        metrics = {"step": step, **metrics}
 
-        self._data[section].append(value)
+        if not self._is_json_serializable(metrics):
+            metrics = self._convert_to_serializable(metrics)
+
+        self._data[section].append(metrics)
         self._save_data()

@@ -63,7 +63,7 @@ class TrainCNN(Trainer):
             optimizer_config=cfg.optimizer,
             lr_scheduler_config=cfg.lr_scheduler,
             experiment_log_dir=cfg.log.experiment_log_dir,
-            metrics_log_dir=cfg.log.metrics_log_dir,
+            metrics_log_path=cfg.log.metrics_log_path,
             model_checkpoint_dir=cfg.model_checkpoint.save_dir,
             model_snapshot_path=cfg.model_snapshot.save_path,
             resume_training=cfg.resume_training.enabled,
@@ -103,7 +103,7 @@ class TrainCNN(Trainer):
             "pred": pred,
         }
 
-    def do_on_validation_epoch_end(self) -> Dict:
+    def do_on_validation_epoch_end(self) -> None:
         self.logger.debug("Validation done. Calculating validation metrics")
 
         label = [
@@ -142,7 +142,9 @@ class TrainCNN(Trainer):
         if self.is_best_model(results):
             self.save_best_model_state_dicts()
 
-        return results
+        self.logger.log({"msg": "Validation results", **results})
+        self.metrics_logger.log(results, self.current_train_step, "val")
+        self.log_wandb_metrics(results, "val")
 
     def is_best_model(self, metrics: Dict) -> bool:
         if not self.best_metrics:
@@ -162,13 +164,13 @@ def plot_metrics(log_filepath: str):
 
     train_loss_x, train_loss_y, lr_y = [], [], []
     if "train" in data:
-        train_loss_x = [x["train_step"] for x in data["train"]]
+        train_loss_x = [x["step"] for x in data["train"]]
         train_loss_y = [x["loss"] for x in data["train"]]
         lr_y = [x["lr"] for x in data["train"]]
 
     val_loss_x, val_loss_y, val_accuracy_y = [], [], []
     if "val" in data:
-        val_loss_x = [x["train_step"] for x in data["val"]]
+        val_loss_x = [x["step"] for x in data["val"]]
         val_loss_y = [x["loss"] for x in data["val"]]
         val_accuracy_y = [x["accuracy"] for x in data["val"]]
 
@@ -215,8 +217,7 @@ def main(cfg: DictConfig) -> None:
         trainer = TrainCNN(cfg)
         trainer.train()
 
-    log_file_name = f"metrics_log.device_{DDPUtils.get_device()}.json"
-    plot_metrics(os.path.join(cfg.log.metrics_log_dir, log_file_name))
+    plot_metrics(cfg.log.metrics_log_path)
 
 
 if __name__ == "__main__":

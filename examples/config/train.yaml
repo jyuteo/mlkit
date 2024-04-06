@@ -12,21 +12,21 @@ env_vars_file_path: .env
 
 log:
   experiment_log_dir: ./logs
-  metrics_log_dir: ./logs
+  metrics_log_path: ./logs/metrics_log.json
 
 wandb:
   enabled: true
   project: test_project
   group: test_group
   tags: ["test"]
-  save_code: true
+  save_code: false
 
 deterministic:
   random_seed: 1234
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 3
+train_epochs: 10
 step_by_epoch: false
 validate_every: 100
 
