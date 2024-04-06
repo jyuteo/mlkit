@@ -1,5 +1,6 @@
 import os
 import wandb
+import pandas as pd
 
 from typing import List, Dict, Optional, Union
 
@@ -10,6 +11,7 @@ WANDB_ENABLED = False
 
 class WandBLogger:
     REQUIRED_ENV_VARS = ["WANDB_API_KEY"]
+    WANDB_TABLE_MAX_ROW = 2000
 
     def __init__(
         self,
@@ -85,6 +87,12 @@ class WandBLogger:
             f"WANDB run starting with id {wandb.run.id} and name {wandb.run.name}."
         )
 
+    def close(self):
+        if not self.is_master_process:
+            return
+        wandb.finish()
+        self.logger.info("Wandb closed.")
+
     def log(self, *args, **kwargs):
         if not self.is_master_process:
             return
@@ -98,4 +106,22 @@ class WandBLogger:
             self.log(metrics, step=step)
         else:
             assert isinstance(category, str), "Category must be of type string"
-            self.log({category: metrics}, step=step)
+            metrics_with_category = {}
+            for key, val in metrics.items():
+                metrics_with_category[f"{category}/{key}"] = val
+            self.log(metrics_with_category, step=step)
+
+    def log_table(self, table: Union[wandb.Table, pd.DataFrame], table_name: str):
+        if isinstance(table, pd.DataFrame):
+            table = wandb.Table(dataframe=table)
+        elif not isinstance(table, wandb.Table):
+            raise f"Invalid table type, expect wandb.Table or pd.DataFrame, but got {type(table)}"
+        table_chunks = table.data // self.WANDB_TABLE_MAX_ROW
+        for i in range(table_chunks + 1):
+            start, end = (
+                i * self.WANDB_TABLE_MAX_ROW,
+                i * self.WANDB_TABLE_MAX_ROW + self.WANDB_TABLE_MAX_ROW,
+            )
+            chunk = table.data[start:end]
+            table_name = table_name if i == 0 else f"{table_name} - {i + 1}"
+            wandb.log({table_name: wandb.Table(data=chunk)})

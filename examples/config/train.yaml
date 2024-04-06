@@ -19,7 +19,7 @@ wandb:
   project: test_project
   group: test_group
   tags: ["test"]
-  save_code: true
+  save_code: false
 
 deterministic:
   random_seed: 1234
