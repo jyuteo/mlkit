@@ -8,35 +8,20 @@ from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
 from dotenv import load_dotenv
 
-from .logger import Logger
-from .metrics_logger import MetricsLogger
-from .wandb_logger import WandBLogger
+from .loggers.logger import Logger
+from .loggers.metrics_logger import MetricsLogger
+from .loggers.wandb_logger import WandBLogger
 from .utils.ddp_utils import DDPUtils, NoDuplicateDistributedSampler
+from .configs import TrainConfig
 
 
 class Trainer:
     def __init__(
         self,
-        env_vars_file_path: str,
-        wandb_config: Dict,
-        train_epochs: int,
-        dataloader_batch_size: int,
-        dataloader_num_workers: int,
-        learning_rate: float,
-        checkpoint_every: int,
-        optimizer_config: Dict,
-        lr_scheduler_config: Dict,
-        step_by_epoch: bool = True,
-        validate_every: int = 1,
-        resume_training: bool = False,
-        resume_training_model_state_dict_path: str = "",
-        experiment_log_dir: str = "./logs",
-        metrics_log_path: str = "./logs/metrics_log.json",
-        model_checkpoint_dir: str = "./checkpoints",
-        model_snapshot_path: str = "./snapshot.t7",
+        config: Union[TrainConfig],
         **kwargs,
     ):
-        config = locals()
+        self.config = config
 
         self.rank = DDPUtils.get_rank()
         self.is_distributed_training = self.rank is not None
@@ -44,10 +29,10 @@ class Trainer:
             not self.is_distributed_training or DDPUtils.is_master_process()
         )
 
-        dir = Path(experiment_log_dir)
+        dir = Path(self.config.log.experiment_log_dir)
         dir.mkdir(parents=True, exist_ok=True)
         experiment_log_filepath = os.path.join(
-            experiment_log_dir, f"train_log.device_{DDPUtils.get_device()}.json"
+            self.config.log.experiment_log_dir, f"train_log.device_{DDPUtils.get_device()}.json"
         )
         self.logger = Logger(experiment_log_filepath, self.is_master_process)
         self.logger.log(
@@ -59,26 +44,27 @@ class Trainer:
             }
         )
 
-        self._load_update_env_variables(env_vars_file_path)
+        self._load_update_env_variables(self.config.env_vars_file_path)
 
-        self.train_epochs = train_epochs
-        self.step_by_epoch = step_by_epoch
-        self.checkpoint_every = checkpoint_every
-        self.validate_every = validate_every
+        self.train_epochs = self.config.train_epochs
+        self.step_by_epoch = self.config.step_by_epoch
+        self.checkpoint_every = self.config.model_checkpoint.checkpoint_every
+        self.validate_every = self.config.validate_every
+        self.snapshot_every = self.config.model_snapshot.snapshot_every
 
         self.train_dataset, self.val_dataset = self.build_dataset()
         self.train_dataset_sampler, self.val_dataset_sampler = (
             self.build_dataset_sampler()
         )
-        self.batch_size = dataloader_batch_size
-        self.num_workers = dataloader_num_workers
+        self.batch_size = self.config.dataloader.batch_size
+        self.num_workers = self.config.dataloader.num_workers
         self.train_dataloader, self.val_dataloader = self.build_dataloader()
 
         self.model = DDPUtils.move_model_to_device(self.build_model())
 
-        self.learning_rate = learning_rate
-        self.optimizer = self.build_optimizer(**optimizer_config)
-        self.lr_scheduler = self.build_lr_scheduler(**lr_scheduler_config)
+        self.learning_rate = self.config.learning_rate
+        self.optimizer = self.build_optimizer(**self.config.optimizer.to_dict())
+        self.lr_scheduler = self.build_lr_scheduler(**self.config.lr_scheduler.to_dict())
 
         self.current_train_epoch = 0
         self.current_train_step = 0
@@ -86,43 +72,43 @@ class Trainer:
         self.train_step_results: Dict = dict()
         self.validation_step_results_for_an_epoch: List[Dict] = list()
 
-        config = self._update_config(config)
-        self.logger.log({"msg": "Config", **config})
-
-        self.metrics_logger = MetricsLogger(metrics_log_path)
+        self.metrics_logger = MetricsLogger(self.config.log.metrics_log_path)
 
         self.wandb_logger = None
-        if wandb_config.enabled:
+        if self.config.wandb.enabled:
             self.wandb_logger = WandBLogger(
                 is_master_process=self.is_master_process,
                 logger=self.logger,
-                config=config,
-                **wandb_config,
+                config=self.config.to_dict(),
+                **self.config.wandb.to_dict(),
             )
             if self.wandb_logger.login():
                 self.wandb_logger.start()
 
-        self.model_checkpoint_dir = model_checkpoint_dir
+        self.model_checkpoint_dir = self.config.model_checkpoint.save_dir
         dir = Path(self.model_checkpoint_dir)
         dir.mkdir(parents=True, exist_ok=True)
 
-        self.model_snapshot_path = model_snapshot_path
+        self.model_snapshot_path = self.config.model_snapshot.save_path
+        dir = Path(os.path.dirname(self.model_snapshot_path))
+        dir.mkdir(parents=True, exist_ok=True)
         if os.path.exists(self.model_snapshot_path):
+            print("snapshot exists")
             self._load_state_dicts_to_resume_training(self.model_snapshot_path)
             self.logger.log(
                 {
-                    "msg": f"Resuming failed training from snapshot: {self.model_snapshot_path}",
+                    "msg": f"Resuming failed training from snapshot: {self.model_snapshot_path}",   # noqa: E501
                     "train_epoch": self.current_train_epoch,
                     "train_step": self.current_train_step,
                 }
             )
-        elif resume_training:
+        elif self.config.resume_training.enabled:
             self._load_state_dicts_to_resume_training(
-                resume_training_model_state_dict_path
+                self.config.resume_training.model_state_dict_path
             )
             self.logger.log(
                 {
-                    "msg": f"Resuming training from given model state dict: {resume_training_model_state_dict_path}",  # noqa: E501
+                    "msg": f"Resuming training from given model state dict: {self.config.resume_training.model_state_dict_path}",  # noqa: E501
                     "train_epoch": self.current_train_epoch,
                     "train_step": self.current_train_step,
                 }
@@ -134,9 +120,6 @@ class Trainer:
 
     def _load_update_env_variables(self, env_vars_file_path: str):
         load_dotenv(env_vars_file_path, override=True)
-        self.logger.info(
-            f"Loaded and updated environment variables from {env_vars_file_path}"
-        )
 
     def _update_config(self, config: Dict) -> Dict:
         config.pop("self")

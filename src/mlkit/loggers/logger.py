@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Union, Tuple
 from logging import FileHandler, StreamHandler
 
-from .utils.ddp_utils import DDPUtils
+from ..utils.ddp_utils import DDPUtils
 
 
 class JsonFormatter(logging.Formatter):

@@ -16,6 +16,16 @@ from torchvision import datasets, transforms
 from mlkit.trainer import Trainer
 from mlkit.utils.trainer_utils import TrainerUtils
 from mlkit.utils.ddp_utils import DDPUtils
+from mlkit.configs import (
+    LogConfig,
+    WandBConfig,
+    TrainConfig,
+    DataLoaderConfig,
+    OptimizerConfig,
+    LRSchedulerConfig,
+    ModelCheckpointConfig,
+    ModelSnapshotConfig,
+)
 
 
 class Net(nn.Module):
@@ -47,27 +57,11 @@ class Net(nn.Module):
 class TrainCNN(Trainer):
     def __init__(
         self,
-        cfg: DictConfig,
+        train_config: TrainConfig,
         **kwargs,
     ):
         super().__init__(
-            env_vars_file_path=cfg.env_vars_file_path,
-            wandb_config=cfg.wandb,
-            train_epochs=cfg.train_epochs,
-            dataloader_batch_size=cfg.dataloader.batch_size,
-            dataloader_num_workers=cfg.dataloader.num_workers,
-            learning_rate=cfg.learning_rate,
-            step_by_epoch=cfg.step_by_epoch,
-            checkpoint_every=cfg.model_checkpoint.checkpoint_every,
-            validate_every=cfg.validate_every,
-            optimizer_config=cfg.optimizer,
-            lr_scheduler_config=cfg.lr_scheduler,
-            experiment_log_dir=cfg.log.experiment_log_dir,
-            metrics_log_path=cfg.log.metrics_log_path,
-            model_checkpoint_dir=cfg.model_checkpoint.save_dir,
-            model_snapshot_path=cfg.model_snapshot.save_path,
-            resume_training=cfg.resume_training.enabled,
-            resume_training_model_state_dict_path=cfg.resume_training.model_state_dict_path,
+            train_config
         )
 
         self.best_metrics: Dict = {}
@@ -208,13 +202,28 @@ def plot_metrics(log_filepath: str):
 def main(cfg: DictConfig) -> None:
     TrainerUtils.set_random_seed_and_torch_deterministic(**cfg.deterministic)
 
+    train_config = TrainConfig(
+        env_vars_file_path=cfg.env_vars_file_path,
+        train_epochs=cfg.train_epochs,
+        step_by_epoch=cfg.step_by_epoch,
+        validate_every=cfg.validate_every,
+        learning_rate=cfg.learning_rate,
+        log=LogConfig(**cfg.log),
+        wandb=WandBConfig(**cfg.wandb),
+        dataloader=DataLoaderConfig(**cfg.dataloader),
+        optimizer=OptimizerConfig(**cfg.optimizer),
+        lr_scheduler=LRSchedulerConfig(**cfg.lr_scheduler),
+        model_checkpoint=ModelCheckpointConfig(**cfg.model_checkpoint),
+        model_snapshot=ModelSnapshotConfig(**cfg.model_snapshot),
+    )
+
     if DDPUtils.is_cuda_available():
         DDPUtils.setup_ddp_torchrun()
-        trainer = TrainCNN(cfg)
+        trainer = TrainCNN(train_config)
         trainer.train()
         DDPUtils.cleanup_ddp()
     else:
-        trainer = TrainCNN(cfg)
+        trainer = TrainCNN(train_config)
         trainer.train()
 
     plot_metrics(cfg.log.metrics_log_path)

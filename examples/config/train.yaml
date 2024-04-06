@@ -26,7 +26,7 @@ deterministic:
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 10
+train_epochs: 1
 step_by_epoch: false
 validate_every: 100
 
@@ -43,20 +43,14 @@ lr_scheduler:
   step_size: 2500
   gamma: 0.01
 
-# saves model state dicts throughout training phase at defined steps
-# is step_by_epoch = True, and checkpoint_every = 2, then model state dict will be saved every 2 epochs
-# is step_by_epoch = False, and checkpoint_every = 2, then model state dict will be saved every 2 train steps
 model_checkpoint:
-  checkpoint_every: 300
+  checkpoint_every: 1000
   save_dir: ./checkpoints
 
-# saves latest model state dict at current train step, mainly for resume of interrupted training
-# snapshot will be deleted when training is finished
 model_snapshot:
+  snapshot_every: 200
   save_path: ./snapshots/snapshot.t7
 
-# if enabled, training will resume from the model state dict in the path provided
-# else, training will start from scratch
 resume_training:
   enabled: false
   model_state_dict_path: ./checkpoints/checkpoint.t7
