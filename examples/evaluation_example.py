@@ -1,13 +1,11 @@
-# Description   : An example for training a CNN model using the MLKit framework
-# Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 test.py  # noqa: E501
+# Description   : An example for evaluation of a CNN model using the MLKit framework
+# Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 evaluation_example.py  # noqa: E501
 
-import os
 import hydra
-import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
+
 
 from typing import Dict
 from omegaconf import DictConfig
@@ -19,12 +17,8 @@ from mlkit.utils.ddp_utils import DDPUtils
 from mlkit.configs import (
     LogConfig,
     WandBConfig,
-    TrainConfig,
+    EvaluationConfig,
     DataLoaderConfig,
-    OptimizerConfig,
-    LRSchedulerConfig,
-    ModelCheckpointConfig,
-    ModelSnapshotConfig,
 )
 
 
@@ -54,15 +48,13 @@ class Net(nn.Module):
         return output
 
 
-class TrainCNN(Trainer):
+class CNNEvaluator(Trainer):
     def __init__(
         self,
-        train_config: TrainConfig,
+        evaluation_config: EvaluationConfig,
         **kwargs,
     ):
-        super().__init__(
-            train_config
-        )
+        super().__init__(evaluation_config)
 
         self.best_metrics: Dict = {}
 
@@ -78,14 +70,6 @@ class TrainCNN(Trainer):
         )
         val_dataset = datasets.MNIST("../data", train=False, transform=transform)
         return train_dataset, val_dataset
-
-    def train_step(self, batch_data) -> Dict:
-        data, target = batch_data
-        output = self.model(data)
-        loss = F.cross_entropy(output, target)
-        return {
-            "loss": loss,
-        }
 
     def validation_step(self, batch_data) -> Dict:
         data, target = batch_data
@@ -133,100 +117,31 @@ class TrainCNN(Trainer):
             "accuracy": epoch_accuracy,
         }
 
-        if self.is_best_model(results):
-            self.save_best_model_state_dicts()
-
         self.logger.log({"msg": "Validation results", **results})
         self.metrics_logger.log(results, self.current_train_step, "val")
         self.log_wandb_metrics(results, "val")
 
-    def is_best_model(self, metrics: Dict) -> bool:
-        if not self.best_metrics:
-            self.best_metrics = metrics
-            return False
-        else:
-            if metrics["accuracy"] > self.best_metrics["accuracy"]:
-                self.best_metrics = metrics
-                return True
-            else:
-                return False
 
-
-def plot_metrics(log_filepath: str):
-    with open(log_filepath, "r") as f:
-        data = json.load(f)
-
-    train_loss_x, train_loss_y, lr_y = [], [], []
-    if "train" in data:
-        train_loss_x = [x["step"] for x in data["train"]]
-        train_loss_y = [x["loss"] for x in data["train"]]
-        lr_y = [x["lr"] for x in data["train"]]
-
-    val_loss_x, val_loss_y, val_accuracy_y = [], [], []
-    if "val" in data:
-        val_loss_x = [x["step"] for x in data["val"]]
-        val_loss_y = [x["loss"] for x in data["val"]]
-        val_accuracy_y = [x["accuracy"] for x in data["val"]]
-
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
-
-    ax1.plot(train_loss_x, train_loss_y, label="train", color="blue")
-    ax1.set_xlabel("Step")
-    ax1.set_ylabel("Loss")
-    ax1.legend()
-    ax1.set_title("Training Loss")
-
-    ax2.plot(val_loss_x, val_loss_y, label="val", color="orange")
-    ax2.set_xlabel("Step")
-    ax2.set_ylabel("Loss")
-    ax2.legend()
-    ax2.set_title("Validation Loss")
-
-    ax3.plot(val_loss_x, val_accuracy_y, label="val", color="green")
-    ax3.set_xlabel("Step")
-    ax3.set_ylabel("Accuracy")
-    ax3.legend()
-    ax3.set_title("Validation Accuracy")
-
-    ax4.plot(lr_y, label="lr", color="yellow")
-    ax4.set_xlabel("Step")
-    ax4.set_ylabel("Learning Rate")
-    ax4.legend()
-    ax4.set_title("Learning Rate")
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(log_filepath), "metrics.png"))
-
-
-@hydra.main(config_path="config", config_name="train", version_base=None)
+@hydra.main(config_path="config", config_name="evaluation", version_base=None)
 def main(cfg: DictConfig) -> None:
     TrainerUtils.set_random_seed_and_torch_deterministic(**cfg.deterministic)
 
-    train_config = TrainConfig(
+    evaluation_config = EvaluationConfig(
+        model_state_dicts_path=cfg.model_state_dicts_path,
         env_vars_file_path=cfg.env_vars_file_path,
-        train_epochs=cfg.train_epochs,
-        step_by_epoch=cfg.step_by_epoch,
-        validate_every=cfg.validate_every,
-        learning_rate=cfg.learning_rate,
         log=LogConfig(**cfg.log),
         wandb=WandBConfig(**cfg.wandb),
         dataloader=DataLoaderConfig(**cfg.dataloader),
-        optimizer=OptimizerConfig(**cfg.optimizer),
-        lr_scheduler=LRSchedulerConfig(**cfg.lr_scheduler),
-        model_checkpoint=ModelCheckpointConfig(**cfg.model_checkpoint),
-        model_snapshot=ModelSnapshotConfig(**cfg.model_snapshot),
     )
 
     if DDPUtils.is_cuda_available():
         DDPUtils.setup_ddp_torchrun()
-        trainer = TrainCNN(train_config)
-        trainer.train()
+        trainer = CNNEvaluator(evaluation_config)
+        trainer.evaluate()
         DDPUtils.cleanup_ddp()
     else:
-        trainer = TrainCNN(train_config)
-        trainer.train()
-
-    plot_metrics(cfg.log.metrics_log_path)
+        trainer = CNNEvaluator(evaluation_config)
+        trainer.evaluate()
 
 
 if __name__ == "__main__":

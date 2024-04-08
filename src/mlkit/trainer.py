@@ -7,44 +7,100 @@ from typing import List, Dict, Tuple, Any, Optional, Union
 from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
 from dotenv import load_dotenv
+from enum import Enum
 
 from .loggers.logger import Logger
 from .loggers.metrics_logger import MetricsLogger
 from .loggers.wandb_logger import WandBLogger
 from .utils.ddp_utils import DDPUtils, NoDuplicateDistributedSampler
-from .configs import TrainConfig
+from .configs import TrainConfig, EvaluationConfig, InferenceConfig
+
+
+class JobType(Enum):
+    TRAIN = "train"
+    EVALUATION = "evaluation"
+    INFERENCE = "inference"
 
 
 class Trainer:
     def __init__(
         self,
-        config: Union[TrainConfig],
+        config: Union[TrainConfig, EvaluationConfig],
         **kwargs,
     ):
+        if isinstance(config, TrainConfig):
+            self.job_type = JobType.TRAIN
+        elif isinstance(config, EvaluationConfig):
+            self.job_type = JobType.EVALUATION
+        elif isinstance(config, InferenceConfig):
+            self.job_type = JobType.INFERENCE
+        else:
+            raise ValueError(
+                "Invalid config type. Expected TrainConfig, EvaluationConfig, or InferenceConfig."
+            )
         self.config = config
 
+        self._load_update_env_variables(self.config.env_vars_file_path)
+
         self.rank = DDPUtils.get_rank()
-        self.is_distributed_training = self.rank is not None
+        self.is_distributed_job = self.rank is not None
         self.is_master_process = (
-            not self.is_distributed_training or DDPUtils.is_master_process()
+            not self.is_distributed_job or DDPUtils.is_master_process()
         )
 
         dir = Path(self.config.log.experiment_log_dir)
         dir.mkdir(parents=True, exist_ok=True)
         experiment_log_filepath = os.path.join(
-            self.config.log.experiment_log_dir, f"train_log.device_{DDPUtils.get_device()}.json"
+            self.config.log.experiment_log_dir,
+            f"log.device_{DDPUtils.get_device()}.json",
         )
         self.logger = Logger(experiment_log_filepath, self.is_master_process)
+
+        self.metrics_logger = MetricsLogger(self.config.log.metrics_log_path)
+
+        self.wandb_logger = None
+        if self.config.wandb.enabled:
+            self.wandb_logger = WandBLogger(
+                is_master_process=self.is_master_process,
+                logger=self.logger,
+                config=self.config.to_dict(),
+                **self.config.wandb.to_dict(),
+            )
+            if self.wandb_logger.login():
+                self.wandb_logger.start()
+
         self.logger.log(
             {
-                "msg": "Distributed training",
-                "is_distributed_training": self.is_distributed_training,
+                "msg": "Distributed job info",
+                "job_type": self.job_type.value,
+                "is_distributed_job": self.is_distributed_job,
                 "is_master_process": self.is_master_process,
                 "rank": self.rank,
             }
         )
 
-        self._load_update_env_variables(self.config.env_vars_file_path)
+        self.current_train_epoch = 0
+        self.current_train_step = 0
+
+        self.train_step_results: Dict = dict()
+        self.validation_step_results_for_an_epoch: List[Dict] = list()
+
+        if self.job_type == JobType.TRAIN:
+            self._init_train_variables()
+        else:
+            self._init_evaluation_inference_variables()
+
+    def __del__(self):
+        if self.wandb_logger:
+            self.wandb_logger.close()
+
+    def _load_update_env_variables(self, env_vars_file_path: str):
+        load_dotenv(env_vars_file_path, override=True)
+
+    def _init_train_variables(self):
+        assert isinstance(
+            self.config, TrainConfig
+        ), "Invalid type for config. Expected TrainConfig"
 
         self.train_epochs = self.config.train_epochs
         self.step_by_epoch = self.config.step_by_epoch
@@ -64,26 +120,9 @@ class Trainer:
 
         self.learning_rate = self.config.learning_rate
         self.optimizer = self.build_optimizer(**self.config.optimizer.to_dict())
-        self.lr_scheduler = self.build_lr_scheduler(**self.config.lr_scheduler.to_dict())
-
-        self.current_train_epoch = 0
-        self.current_train_step = 0
-
-        self.train_step_results: Dict = dict()
-        self.validation_step_results_for_an_epoch: List[Dict] = list()
-
-        self.metrics_logger = MetricsLogger(self.config.log.metrics_log_path)
-
-        self.wandb_logger = None
-        if self.config.wandb.enabled:
-            self.wandb_logger = WandBLogger(
-                is_master_process=self.is_master_process,
-                logger=self.logger,
-                config=self.config.to_dict(),
-                **self.config.wandb.to_dict(),
-            )
-            if self.wandb_logger.login():
-                self.wandb_logger.start()
+        self.lr_scheduler = self.build_lr_scheduler(
+            **self.config.lr_scheduler.to_dict()
+        )
 
         self.model_checkpoint_dir = self.config.model_checkpoint.save_dir
         dir = Path(self.model_checkpoint_dir)
@@ -97,7 +136,7 @@ class Trainer:
             self._load_state_dicts_to_resume_training(self.model_snapshot_path)
             self.logger.log(
                 {
-                    "msg": f"Resuming failed training from snapshot: {self.model_snapshot_path}",   # noqa: E501
+                    "msg": f"Resuming failed training from snapshot: {self.model_snapshot_path}",  # noqa: E501
                     "train_epoch": self.current_train_epoch,
                     "train_step": self.current_train_step,
                 }
@@ -114,83 +153,125 @@ class Trainer:
                 }
             )
 
-    def __del__(self):
-        if self.wandb_logger:
-            self.wandb_logger.close()
+    def _init_evaluation_inference_variables(self):
+        assert self.config.model_state_dicts_path and os.path.exists(
+            self.config.model_state_dicts_path
+        ), "Invalid model state dicts path"
 
-    def _load_update_env_variables(self, env_vars_file_path: str):
-        load_dotenv(env_vars_file_path, override=True)
-
-    def _update_config(self, config: Dict) -> Dict:
-        config.pop("self")
-        config.pop("wandb_config")
-        config.update(
-            {
-                "model_class": self.model.__class__.__name__,
-                "optimizer_class": self.optimizer.__class__.__name__,
-                "lr_scheduler": self.lr_scheduler.__class__.__name__,
-            }
+        self.model_state_dicts_path = self.config.model_state_dicts_path
+        self.train_dataset, self.val_dataset = self.build_dataset()
+        self.train_dataset_sampler, self.val_dataset_sampler = (
+            self.build_dataset_sampler()
         )
-        return config
+        self.batch_size = self.config.dataloader.batch_size
+        self.num_workers = self.config.dataloader.num_workers
+        self.train_dataloader, self.val_dataloader = self.build_dataloader()
+        self.model = DDPUtils.move_model_to_device(self.build_model())
+        self._load_state_dicts_for_evaluation_inference(self.model_state_dicts_path)
+        self.logger.log(
+            f"Loaded model state dicts from {self.config.model_state_dicts_path}"
+        )
 
-    def _load_state_dicts_to_resume_training(self, checkpoint_path: str):
+    def _load_state_dicts_to_resume_training(self, state_dicts_path: str):
         assert os.path.exists(
-            checkpoint_path
-        ), f"Checkpoint path does not exist: {checkpoint_path}"
+            state_dicts_path
+        ), f"State dicts path does not exist: {state_dicts_path}"
 
         map_location = None
-        if self.is_distributed_training:
+        if self.is_distributed_job:
             map_location = {"cuda:0": f"cuda:{self.rank}"}
-        checkpoint = torch.load(checkpoint_path, map_location=map_location)
+        state_dicts = torch.load(state_dicts_path, map_location=map_location)
 
-        if self.is_distributed_training:
-            self.model.module.load_state_dict(checkpoint["model"])
+        required_keys = ["model", "optimizer", "lr_scheduler", "epoch", "step"]
+        assert all(
+            [key in state_dicts for key in required_keys]
+        ), f"Invalid state dicts. Required keys: {required_keys}"
+
+        if self.is_distributed_job:
+            self.model.module.load_state_dict(state_dicts["model"])
         else:
-            self.model.load_state_dict(checkpoint["model"])
-        self.optimizer.load_state_dict(checkpoint["optimizer"])
-        self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-        self.current_train_epoch = checkpoint["epoch"]
-        self.current_train_step = checkpoint["step"]
+            self.model.load_state_dict(state_dicts["model"])
+        self.optimizer.load_state_dict(state_dicts["optimizer"])
+        self.lr_scheduler.load_state_dict(state_dicts["lr_scheduler"])
+        self.current_train_epoch = state_dicts["epoch"]
+        self.current_train_step = state_dicts["step"]
+
+    def _load_state_dicts_for_evaluation_inference(self, state_dicts_path: str):
+        assert os.path.exists(
+            state_dicts_path
+        ), f"State dicts path does not exist: {state_dicts_path}"
+
+        map_location = None
+        if self.is_distributed_job:
+            map_location = {"cuda:0": f"cuda:{self.rank}"}
+        state_dicts = torch.load(state_dicts_path, map_location=map_location)
+
+        required_keys = ["model"]
+        assert all(
+            [key in state_dicts for key in required_keys]
+        ), f"Invalid state dicts. Required keys: {required_keys}"
+
+        if self.is_distributed_job:
+            self.model.module.load_state_dict(state_dicts["model"])
+        else:
+            self.model.load_state_dict(state_dicts["model"])
 
     def _delete_model_snapshot(self):
         if os.path.exists(self.model_snapshot_path):
             os.remove(self.model_snapshot_path)
 
     def _set_ddp_barrier(self) -> None:
-        if self.is_distributed_training:
+        if self.is_distributed_job:
             DDPUtils.set_barrier()
 
-    def build_dataset(self) -> Tuple[Dataset, Dataset]:
+    def build_dataset(self) -> Tuple[Optional[Dataset], Optional[Dataset]]:
+        """
+        Method to construct train, evaluation or inference dataset
+
+        Returns:
+            Tuple[Optional[Dataset], Optional[Dataset]]: The first element is the dataset used for training,
+            while the second element is the dataset used for either evaluation or inference.
+            If job type is EVALUATION or INFERENCE, first element in the tuple should be None
+        """  # noqa: E501
         raise NotImplementedError
 
     def build_dataset_sampler(
         self,
-    ) -> Tuple[NoDuplicateDistributedSampler, NoDuplicateDistributedSampler]:
+    ) -> Tuple[
+        Optional[NoDuplicateDistributedSampler], Optional[NoDuplicateDistributedSampler]
+    ]:
         train_dataset_sampler, val_dataset_sampler = None, None
-        if self.is_distributed_training:
-            train_dataset_sampler = NoDuplicateDistributedSampler(self.train_dataset)
-            val_dataset_sampler = NoDuplicateDistributedSampler(
-                self.val_dataset, shuffle=False
-            )
+        if self.is_distributed_job:
+            if self.train_dataset:
+                train_dataset_sampler = NoDuplicateDistributedSampler(
+                    self.train_dataset
+                )
+            if self.val_dataset:
+                val_dataset_sampler = NoDuplicateDistributedSampler(
+                    self.val_dataset, shuffle=False
+                )
         return train_dataset_sampler, val_dataset_sampler
 
-    def build_dataloader(self) -> Tuple[DataLoader, DataLoader]:
-        train_dataloader = DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            shuffle=self.train_dataset_sampler is None,
-            sampler=self.train_dataset_sampler,
-        )
-        val_dataloader = DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            shuffle=False,
-            sampler=self.val_dataset_sampler,
-        )
+    def build_dataloader(self) -> Tuple[Optional[DataLoader], Optional[DataLoader]]:
+        train_dataloader, val_dataloader = None, None
+        if self.train_dataset:
+            train_dataloader = DataLoader(
+                self.train_dataset,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                pin_memory=True,
+                shuffle=self.train_dataset_sampler is None,
+                sampler=self.train_dataset_sampler,
+            )
+        if self.val_dataset:
+            val_dataloader = DataLoader(
+                self.val_dataset,
+                batch_size=self.batch_size,
+                num_workers=self.num_workers,
+                pin_memory=True,
+                shuffle=False,
+                sampler=self.val_dataset_sampler,
+            )
         return train_dataloader, val_dataloader
 
     def build_model(self) -> torch.nn.Module:
@@ -211,6 +292,8 @@ class Trainer:
         return torch.optim.lr_scheduler.StepLR(self.optimizer, step_size, gamma)
 
     def train_step(self, batch_data: Any) -> Dict:
+        if self.job_type == JobType.TRAIN:
+            return
         raise NotImplementedError
 
     def _do_on_train_step_start(self):
@@ -245,7 +328,8 @@ class Trainer:
         if not self.step_by_epoch and self.is_master_process:
             if self.current_train_step % self.checkpoint_every == 0:
                 self.save_model_state_dicts()
-            self.save_model_snapshot()
+            if self.current_train_step % self.snapshot_every == 0:
+                self.save_model_snapshot()
         if self.current_train_step % self.validate_every == 0:
             self._run_validation_epoch()
         self.do_on_train_step_end()
@@ -296,7 +380,7 @@ class Trainer:
                 "train_step": self.current_train_step,
             }
         )
-        if self.is_distributed_training:
+        if self.is_distributed_job:
             self.train_dataset_sampler.set_epoch(self.current_train_epoch)
         self.do_on_train_epoch_start()
 
@@ -307,7 +391,8 @@ class Trainer:
         if self.step_by_epoch and self.is_master_process:
             if self.current_train_epoch % self.checkpoint_every == 0:
                 self.save_model_state_dicts()
-            self.save_model_snapshot()
+            if self.current_train_epoch % self.snapshot_every == 0:
+                self.save_model_snapshot()
         if self.current_train_epoch % self.validate_every == 0:
             self._run_validation_epoch()
         self.do_on_train_epoch_end()
@@ -372,10 +457,21 @@ class Trainer:
         pass
 
     def train(self) -> None:
+        assert (
+            self.job_type == JobType.TRAIN
+        ), f"Invalid job type. Expected {JobType.TRAIN}"
+
         for _ in range(self.current_train_epoch + 1, self.train_epochs + 1):
             self._run_train_epoch()
         if self.is_master_process:
             self._delete_model_snapshot()
+
+    def evaluate(self) -> None:
+        assert (
+            self.job_type == JobType.EVALUATION
+        ), f"Invalid job type. Expected {JobType.EVALUATION}"
+
+        self._run_validation_epoch()
 
     def save_model_state_dicts(
         self,
@@ -388,7 +484,7 @@ class Trainer:
             "step": self.current_train_step,
             "model": (
                 self.model.module.state_dict()
-                if self.is_distributed_training
+                if self.is_distributed_job
                 else self.model.state_dict()
             ),
             "optimizer": self.optimizer.state_dict(),
