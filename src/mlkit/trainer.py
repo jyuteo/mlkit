@@ -66,10 +66,10 @@ class Trainer:
                 config=self.config.to_dict(),
                 **self.config.wandb.to_dict(),
             )
-            if self.wandb_logger.login():
+            if self.wandb_logger.infoin():
                 self.wandb_logger.start()
 
-        self.logger.log(
+        self.logger.info(
             {
                 "msg": "Distributed job info",
                 "job_type": self.job_type.value,
@@ -84,6 +84,7 @@ class Trainer:
 
         self.train_step_results: Dict = dict()
         self.validation_step_results_for_an_epoch: List[Dict] = list()
+        self.inference_step_results_for_an_epoch: List[Dict] = list()
 
         if self.job_type == JobType.TRAIN:
             self._init_train_variables()
@@ -134,7 +135,7 @@ class Trainer:
         if os.path.exists(self.model_snapshot_path):
             print("snapshot exists")
             self._load_state_dicts_to_resume_training(self.model_snapshot_path)
-            self.logger.log(
+            self.logger.info(
                 {
                     "msg": f"Resuming failed training from snapshot: {self.model_snapshot_path}",  # noqa: E501
                     "train_epoch": self.current_train_epoch,
@@ -145,7 +146,7 @@ class Trainer:
             self._load_state_dicts_to_resume_training(
                 self.config.resume_training.model_state_dict_path
             )
-            self.logger.log(
+            self.logger.info(
                 {
                     "msg": f"Resuming training from given model state dict: {self.config.resume_training.model_state_dict_path}",  # noqa: E501
                     "train_epoch": self.current_train_epoch,
@@ -168,7 +169,7 @@ class Trainer:
         self.train_dataloader, self.val_dataloader = self.build_dataloader()
         self.model = DDPUtils.move_model_to_device(self.build_model())
         self._load_state_dicts_for_evaluation_inference(self.model_state_dicts_path)
-        self.logger.log(
+        self.logger.info(
             f"Loaded model state dicts from {self.config.model_state_dicts_path}"
         )
 
@@ -293,8 +294,7 @@ class Trainer:
 
     def train_step(self, batch_data: Any) -> Dict:
         if self.job_type == JobType.TRAIN:
-            return
-        raise NotImplementedError
+            raise NotImplementedError
 
     def _do_on_train_step_start(self):
         self.current_train_step += 1
@@ -321,7 +321,7 @@ class Trainer:
                 "loss": torch.mean(train_step_losses),
                 "lr": self.optimizer.param_groups[0]["lr"],
             }
-            self.metrics_logger.log(
+            self.metrics_logger.info(
                 train_step_metrics, self.current_train_step, "train"
             )
             self.log_wandb_metrics(train_step_metrics, "train")
@@ -373,7 +373,7 @@ class Trainer:
 
     def _do_on_train_epoch_start(self) -> None:
         self.current_train_epoch += 1
-        self.logger.log(
+        self.logger.info(
             {
                 "msg": "Train epoch started",
                 "train_epoch": self.current_train_epoch,
@@ -400,12 +400,23 @@ class Trainer:
     def do_on_train_epoch_end(self) -> None:
         pass
 
+    def train(self) -> None:
+        assert (
+            self.job_type == JobType.TRAIN
+        ), f"Invalid job type. Expected {JobType.TRAIN}"
+
+        for _ in range(self.current_train_epoch + 1, self.train_epochs + 1):
+            self._run_train_epoch()
+        if self.is_master_process:
+            self._delete_model_snapshot()
+
     def validation_step(self, batch_data: Any) -> Optional[Dict]:
         """
         Return value will be appened to self.validation_step_results_for_an_epoch,
         and can be used to calculate validation metrics for the a validation epoch in later step
         """
-        raise NotImplementedError
+        if self.job_type in (JobType.TRAIN, JobType.EVALUATION):
+            raise NotImplementedError
 
     def _do_on_validation_step_start(self) -> None:
         self._set_ddp_barrier()
@@ -456,22 +467,59 @@ class Trainer:
     def do_on_validation_epoch_end(self) -> None:
         pass
 
-    def train(self) -> None:
-        assert (
-            self.job_type == JobType.TRAIN
-        ), f"Invalid job type. Expected {JobType.TRAIN}"
-
-        for _ in range(self.current_train_epoch + 1, self.train_epochs + 1):
-            self._run_train_epoch()
-        if self.is_master_process:
-            self._delete_model_snapshot()
-
     def evaluate(self) -> None:
         assert (
             self.job_type == JobType.EVALUATION
         ), f"Invalid job type. Expected {JobType.EVALUATION}"
 
         self._run_validation_epoch()
+
+    def inference_step(self, batch_data: Any) -> Optional[Dict]:
+        if self.job_type == JobType.INFERENCE:
+            raise NotImplementedError
+
+    def _do_on_inference_step_start(self) -> None:
+        self._set_ddp_barrier()
+        self.do_on_inference_step_start()
+
+    def do_on_inference_step_start(self) -> None:
+        pass
+
+    def _do_on_inference_step_end(self) -> None:
+        self._set_ddp_barrier()
+        self.do_on_inference_step_end()
+
+    def do_on_inference_step_end(self) -> None:
+        pass
+
+    def _run_inference_epoch(self) -> None:
+        self._do_on_inference_epoch_start()
+        self.model.eval()
+
+        with torch.no_grad():
+            for batch in self.val_dataloader:
+                self._do_on_inference_step_start()
+                batch = DDPUtils.move_tensor_or_tuple_of_tensors_to_device(batch)
+                result = self.inference_step(batch)
+                if result:
+                    self.inference_step_results_for_an_epoch.append(result)
+                self._do_on_inference_step_end()
+
+        self._do_on_inference_epoch_end()
+
+    def _do_on_inference_epoch_start(self) -> None:
+        self.inference_step_results_for_an_epoch = list()
+        self.logger.info("Inference started")
+        self.do_on_inference_epoch_start()
+
+    def do_on_inference_epoch_start(self) -> None:
+        pass
+
+    def _do_on_inference_epoch_end(self) -> None:
+        self.do_on_validation_epoch_end()
+
+    def do_on_inference_epoch_end(self) -> None:
+        pass
 
     def save_model_state_dicts(
         self,
@@ -491,7 +539,7 @@ class Trainer:
             "lr_scheduler": self.lr_scheduler.state_dict(),
         }
         if is_best:
-            self.logger.log(
+            self.logger.info(
                 {
                     "msg": "Best model found. Saving model",
                     "train_epoch": self.current_train_epoch,
@@ -527,11 +575,11 @@ class Trainer:
     def log_wandb_metrics(self, metrics: Dict, category: str = "") -> None:
         if not self.wandb_logger:
             return
-        self.wandb_logger.log_metrics(metrics, self.current_train_step, category)
+        self.wandb_logger.info_metrics(metrics, self.current_train_step, category)
 
     def log_wandb_table(
         self, table: Union[wandb.Table, pd.DataFrame], table_name: str
     ) -> None:
         if not self.wandb_logger:
             return
-        self.wandb_logger.log_table(table, table_name)
+        self.wandb_logger.info_table(table, table_name)

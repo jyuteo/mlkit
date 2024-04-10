@@ -17,7 +17,7 @@ from mlkit.utils.ddp_utils import DDPUtils
 from mlkit.configs import (
     LogConfig,
     WandBConfig,
-    EvaluationConfig,
+    InferenceConfig,
     DataLoaderConfig,
 )
 
@@ -48,13 +48,13 @@ class Net(nn.Module):
         return output
 
 
-class CNNEvaluator(Trainer):
+class CNNInference(Trainer):
     def __init__(
         self,
-        evaluation_config: EvaluationConfig,
+        config: InferenceConfig,
         **kwargs,
     ):
-        super().__init__(evaluation_config)
+        super().__init__(config)
 
     def build_model(self) -> torch.nn.Module:
         return Net()
@@ -121,7 +121,7 @@ class CNNEvaluator(Trainer):
 def main(cfg: DictConfig) -> None:
     TrainerUtils.set_random_seed_and_torch_deterministic(**cfg.deterministic)
 
-    evaluation_config = EvaluationConfig(
+    evaluation_config = InferenceConfig(
         model_state_dicts_path=cfg.model_state_dicts_path,
         env_vars_file_path=cfg.env_vars_file_path,
         log=LogConfig(**cfg.log),
@@ -131,11 +131,11 @@ def main(cfg: DictConfig) -> None:
 
     if DDPUtils.is_cuda_available():
         DDPUtils.setup_ddp_torchrun()
-        trainer = CNNEvaluator(evaluation_config)
+        trainer = CNNInference(evaluation_config)
         trainer.evaluate()
         DDPUtils.cleanup_ddp()
     else:
-        trainer = CNNEvaluator(evaluation_config)
+        trainer = CNNInference(evaluation_config)
         trainer.evaluate()
 
 
