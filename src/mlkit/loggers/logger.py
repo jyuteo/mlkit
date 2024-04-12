@@ -118,16 +118,6 @@ class Logger:
             f"Unsupported log type: {type(logs)}, should be either string or Dict"
         )
 
-    def log_on_master(self, logs: Union[str, Dict]) -> None:
-        if not DDPUtils.is_master():
-            return
-        msg, log_dict = self._process_logs(logs)
-        self.logger.info(msg, extra=log_dict)
-
-    def log(self, logs: Union[str, Dict]) -> None:
-        msg, log_dict = self._process_logs(logs)
-        self.logger.info(msg, extra=log_dict)
-
     def debug(self, logs: Union[str, Dict]) -> None:
         msg, log_dict = self._process_logs(logs)
         self.logger.debug(msg, extra=log_dict)

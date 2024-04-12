@@ -1,5 +1,5 @@
 # Description   : An example for training a CNN model using the MLKit framework
-# Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 test.py  # noqa: E501
+# Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 train_example.py  # noqa: E501
 
 import os
 import hydra
@@ -54,15 +54,13 @@ class Net(nn.Module):
         return output
 
 
-class TrainCNN(Trainer):
+class CNNTrainer(Trainer):
     def __init__(
         self,
         train_config: TrainConfig,
         **kwargs,
     ):
-        super().__init__(
-            train_config
-        )
+        super().__init__(train_config)
 
         self.best_metrics: Dict = {}
 
@@ -136,7 +134,7 @@ class TrainCNN(Trainer):
         if self.is_best_model(results):
             self.save_best_model_state_dicts()
 
-        self.logger.log({"msg": "Validation results", **results})
+        self.logger.info({"msg": "Validation results", **results})
         self.metrics_logger.log(results, self.current_train_step, "val")
         self.log_wandb_metrics(results, "val")
 
@@ -219,11 +217,11 @@ def main(cfg: DictConfig) -> None:
 
     if DDPUtils.is_cuda_available():
         DDPUtils.setup_ddp_torchrun()
-        trainer = TrainCNN(train_config)
+        trainer = CNNTrainer(train_config)
         trainer.train()
         DDPUtils.cleanup_ddp()
     else:
-        trainer = TrainCNN(train_config)
+        trainer = CNNTrainer(train_config)
         trainer.train()
 
     plot_metrics(cfg.log.metrics_log_path)

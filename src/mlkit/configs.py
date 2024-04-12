@@ -49,6 +49,7 @@ class LRSchedulerConfig(Config):
 class ModelCheckpointConfig(Config):
     """
     saves model state dicts throughout training phase at defined steps
+
     if step_by_epoch = True, and checkpoint_every = 2, then model state dict will be saved every 2 epochs
     if step_by_epoch = False, and checkpoint_every = 2, then model state dict will be saved every 2 train steps
     """  # noqa: E501
@@ -62,7 +63,10 @@ class ModelSnapshotConfig(Config):
     """
     saves latest model state dict at current train step, mainly for resume of interrupted training
     snapshot will be deleted when training is finished
-    """
+
+    if step_by_epoch = True, and snapshot_every = 2, then model snapshot will be saved every 2 epochs
+    if step_by_epoch = False, and snapshot_every = 2, then model snapshot will be saved every 2 train steps
+    """  # noqa: E501
 
     snapshot_every: int
     save_path: str = "./snapshots/snapshot.t7"
@@ -81,7 +85,6 @@ class ResumeTrainingConfig(Config):
 
 @dataclass
 class TrainConfig(Config):
-    # required configs
     train_epochs: int
     validate_every: int
     learning_rate: float
@@ -89,7 +92,6 @@ class TrainConfig(Config):
     model_checkpoint: ModelCheckpointConfig
     model_snapshot: ModelSnapshotConfig
 
-    # default config values will be used if not provided
     env_vars_file_path: str = ".env"
     step_by_epoch: bool = False
     log: LogConfig = field(default_factory=LogConfig)
@@ -101,9 +103,19 @@ class TrainConfig(Config):
 
 @ dataclass
 class EvaluationConfig(Config):
-    pass
+    model_state_dicts_path: str
+
+    env_vars_file_path: str = ".env"
+    log: LogConfig = field(default_factory=LogConfig)
+    wandb: WandBConfig = field(default_factory=WandBConfig)
+    dataloader: DataLoaderConfig = field(default_factory=DataLoaderConfig)
 
 
 @dataclass
 class InferenceConfig(Config):
-    pass
+    model_state_dicts_path: str
+
+    env_vars_file_path: str = ".env"
+    log: LogConfig = field(default_factory=LogConfig)
+    wandb: WandBConfig = WandBConfig(enabled=False)
+    dataloader: DataLoaderConfig = field(default_factory=DataLoaderConfig)
