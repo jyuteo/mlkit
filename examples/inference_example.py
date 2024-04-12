@@ -1,11 +1,10 @@
 # Description   : An example for evaluation of a CNN model using the MLKit framework
-# Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 evaluation_example.py  # noqa: E501
+# Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 inference_example.py  # noqa: E501
 
 import hydra
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 
 from typing import Dict
 from omegaconf import DictConfig
@@ -19,6 +18,7 @@ from mlkit.configs import (
     WandBConfig,
     InferenceConfig,
     DataLoaderConfig,
+    EvaluationConfig,
 )
 
 
@@ -66,7 +66,7 @@ class CNNInference(Trainer):
         val_dataset = datasets.MNIST("../data", train=False, transform=transform)
         return None, val_dataset
 
-    def validation_step(self, batch_data) -> Dict:
+    def inference_step(self, batch_data) -> Dict:
         data, target = batch_data
         output = self.model(data)
         pred = output.argmax(dim=1, keepdim=False)
@@ -76,20 +76,18 @@ class CNNInference(Trainer):
             "pred": pred,
         }
 
-    def do_on_validation_epoch_end(self) -> None:
-        self.logger.debug("Validation done. Calculating validation metrics")
-
+    def do_on_inference_epoch_end(self) -> None:
         label = [
             step_output["label"]
-            for step_output in self.validation_step_results_for_an_epoch
+            for step_output in self.inference_step_results_for_an_epoch
         ]
         output = [
             step_output["output"]
-            for step_output in self.validation_step_results_for_an_epoch
+            for step_output in self.inference_step_results_for_an_epoch
         ]
         pred = [
             step_output["pred"]
-            for step_output in self.validation_step_results_for_an_epoch
+            for step_output in self.inference_step_results_for_an_epoch
         ]
 
         label = torch.cat(label, dim=0)
@@ -100,28 +98,22 @@ class CNNInference(Trainer):
         output = DDPUtils.all_gather_tensors(output)
         pred = DDPUtils.all_gather_tensors(pred)
 
-        total_loss = F.cross_entropy(output, label).item() * label.size(0)
-        total_correct = torch.sum(pred == label).item()
-        total_data = label.size(0)
-
-        epoch_loss = total_loss / total_data
-        epoch_accuracy = total_correct / total_data
-
-        results = {
-            "loss": epoch_loss,
-            "accuracy": epoch_accuracy,
-        }
-
-        self.logger.info({"msg": "Validation results", **results})
-        self.metrics_logger.info(results, self.current_train_step, "val")
-        self.log_wandb_metrics(results, "val")
+        self.metrics_logger.log(
+            {
+                "label": label,
+                "output": output,
+                "pred": pred,
+            },
+            0,
+            "inference",
+        )
 
 
-@hydra.main(config_path="config", config_name="evaluation", version_base=None)
+@hydra.main(config_path="config", config_name="inference", version_base=None)
 def main(cfg: DictConfig) -> None:
     TrainerUtils.set_random_seed_and_torch_deterministic(**cfg.deterministic)
 
-    evaluation_config = InferenceConfig(
+    inference_config = EvaluationConfig(
         model_state_dicts_path=cfg.model_state_dicts_path,
         env_vars_file_path=cfg.env_vars_file_path,
         log=LogConfig(**cfg.log),
@@ -131,12 +123,12 @@ def main(cfg: DictConfig) -> None:
 
     if DDPUtils.is_cuda_available():
         DDPUtils.setup_ddp_torchrun()
-        trainer = CNNInference(evaluation_config)
-        trainer.evaluate()
+        trainer = CNNInference(inference_config)
+        trainer.inference()
         DDPUtils.cleanup_ddp()
     else:
-        trainer = CNNInference(evaluation_config)
-        trainer.evaluate()
+        trainer = CNNInference(inference_config)
+        trainer.inference()
 
 
 if __name__ == "__main__":

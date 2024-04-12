@@ -66,7 +66,7 @@ class Trainer:
                 config=self.config.to_dict(),
                 **self.config.wandb.to_dict(),
             )
-            if self.wandb_logger.infoin():
+            if self.wandb_logger.login():
                 self.wandb_logger.start()
 
         self.logger.info(
@@ -254,6 +254,14 @@ class Trainer:
         return train_dataset_sampler, val_dataset_sampler
 
     def build_dataloader(self) -> Tuple[Optional[DataLoader], Optional[DataLoader]]:
+        """
+        Method to construct train, evaluation or inference dataloader
+
+        Returns:
+            Tuple[Optional[DataLoader], Optional[DataLoader]]: The first element is the dataloader used for training,
+            while the second element is the dataloader used for either evaluation or inference.
+            If job type is EVALUATION or INFERENCE, first element in the tuple should be None
+        """  # noqa: E501
         train_dataloader, val_dataloader = None, None
         if self.train_dataset:
             train_dataloader = DataLoader(
@@ -321,7 +329,7 @@ class Trainer:
                 "loss": torch.mean(train_step_losses),
                 "lr": self.optimizer.param_groups[0]["lr"],
             }
-            self.metrics_logger.info(
+            self.metrics_logger.log(
                 train_step_metrics, self.current_train_step, "train"
             )
             self.log_wandb_metrics(train_step_metrics, "train")
@@ -403,7 +411,7 @@ class Trainer:
     def train(self) -> None:
         assert (
             self.job_type == JobType.TRAIN
-        ), f"Invalid job type. Expected {JobType.TRAIN}"
+        ), f"Invalid job config type. Expected {TrainConfig.__name__}"
 
         for _ in range(self.current_train_epoch + 1, self.train_epochs + 1):
             self._run_train_epoch()
@@ -470,7 +478,7 @@ class Trainer:
     def evaluate(self) -> None:
         assert (
             self.job_type == JobType.EVALUATION
-        ), f"Invalid job type. Expected {JobType.EVALUATION}"
+        ), f"Invalid job config type. Expected {EvaluationConfig.__name__}"
 
         self._run_validation_epoch()
 
@@ -516,10 +524,17 @@ class Trainer:
         pass
 
     def _do_on_inference_epoch_end(self) -> None:
-        self.do_on_validation_epoch_end()
+        self.do_on_inference_epoch_end()
 
     def do_on_inference_epoch_end(self) -> None:
         pass
+
+    def inference(self) -> None:
+        assert (
+            self.job_type == JobType.INFERENCE
+        ), f"Invalid job config type. Expected {InferenceConfig.__name__}"
+
+        self._run_inference_epoch()
 
     def save_model_state_dicts(
         self,
@@ -575,11 +590,11 @@ class Trainer:
     def log_wandb_metrics(self, metrics: Dict, category: str = "") -> None:
         if not self.wandb_logger:
             return
-        self.wandb_logger.info_metrics(metrics, self.current_train_step, category)
+        self.wandb_logger.log_metrics(metrics, self.current_train_step, category)
 
     def log_wandb_table(
         self, table: Union[wandb.Table, pd.DataFrame], table_name: str
     ) -> None:
         if not self.wandb_logger:
             return
-        self.wandb_logger.info_table(table, table_name)
+        self.wandb_logger.log_table(table, table_name)

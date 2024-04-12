@@ -113,7 +113,7 @@ class CNNEvaluator(Trainer):
         }
 
         self.logger.info({"msg": "Validation results", **results})
-        self.metrics_logger.info(results, self.current_train_step, "val")
+        self.metrics_logger.log(results, self.current_train_step, "val")
         self.log_wandb_metrics(results, "val")
 
 

@@ -49,7 +49,7 @@ class WandBLogger:
         if any(
             wandb_env_var not in os.environ for wandb_env_var in self.REQUIRED_ENV_VARS
         ):
-            WandBLogger._disable_wandb("Unable to get required env variables for WandB")
+            self._disable_wandb("Unable to get required env variables for WandB")
             return False
         success = wandb.login(
             key=os.environ["WANDB_API_KEY"],
@@ -58,7 +58,7 @@ class WandBLogger:
             force=True,
         )
         if not success:
-            WandBLogger._disable_wandb("Login failed")
+            self._disable_wandb("Login failed")
             return False
         self.logger.info("WandB login successful")
         return True
