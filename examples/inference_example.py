@@ -18,7 +18,8 @@ from mlkit.configs import (
     WandBConfig,
     InferenceConfig,
     DataLoaderConfig,
-    EvaluationConfig,
+    ModelFileConfig,
+    ModelFileType,
 )
 
 
@@ -111,10 +112,23 @@ class CNNInference(Trainer):
 
 @hydra.main(config_path="config", config_name="inference", version_base=None)
 def main(cfg: DictConfig) -> None:
+    assert cfg.model_file.file_type in (
+        "state_dict",
+        "torchscript",
+    ), "Invalid model_type. Expected 'state_dict' (.t7) or 'torchscript' (.pt)"
+
     TrainerUtils.set_random_seed_and_torch_deterministic(**cfg.deterministic)
 
-    inference_config = EvaluationConfig(
-        model_state_dicts_path=cfg.model_state_dicts_path,
+    if cfg.model_file.file_type == "state_dict":
+        model_file_type = ModelFileType.STATE_DICT
+    else:
+        model_file_type = ModelFileType.TORCHSCRIPT
+
+    inference_config = InferenceConfig(
+        model_file=ModelFileConfig(
+            file_type=model_file_type,
+            file_path=cfg.model_file.file_path,
+        ),
         env_vars_file_path=cfg.env_vars_file_path,
         log=LogConfig(**cfg.log),
         wandb=WandBConfig(**cfg.wandb),

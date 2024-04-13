@@ -132,7 +132,7 @@ class CNNTrainer(Trainer):
         }
 
         if self.is_best_model(results):
-            self.save_best_model_state_dicts()
+            self.save_best_model()
 
         self.logger.info({"msg": "Validation results", **results})
         self.metrics_logger.log(results, self.current_train_step, "val")

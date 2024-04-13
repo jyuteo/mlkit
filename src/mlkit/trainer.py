@@ -13,13 +13,13 @@ from .loggers.logger import Logger
 from .loggers.metrics_logger import MetricsLogger
 from .loggers.wandb_logger import WandBLogger
 from .utils.ddp_utils import DDPUtils, NoDuplicateDistributedSampler
-from .configs import TrainConfig, EvaluationConfig, InferenceConfig
-
-
-class JobType(Enum):
-    TRAIN = "train"
-    EVALUATION = "evaluation"
-    INFERENCE = "inference"
+from .configs import (
+    TrainConfig,
+    EvaluationConfig,
+    InferenceConfig,
+    JobType,
+    ModelFileType,
+)
 
 
 class Trainer:
@@ -68,6 +68,8 @@ class Trainer:
             )
             if self.wandb_logger.login():
                 self.wandb_logger.start()
+            else:
+                raise RuntimeError("Failed to login to WandB")
 
         self.logger.info(
             {
@@ -129,11 +131,11 @@ class Trainer:
         dir = Path(self.model_checkpoint_dir)
         dir.mkdir(parents=True, exist_ok=True)
 
-        self.model_snapshot_path = self.config.model_snapshot.save_path
-        dir = Path(os.path.dirname(self.model_snapshot_path))
+        self.model_snapshot_dir = self.config.model_snapshot.save_dir
+        dir = Path(self.model_snapshot_dir)
         dir.mkdir(parents=True, exist_ok=True)
+        self.model_snapshot_path = os.path.join(self.model_snapshot_dir, "snapshot.t7")
         if os.path.exists(self.model_snapshot_path):
-            print("snapshot exists")
             self._load_state_dicts_to_resume_training(self.model_snapshot_path)
             self.logger.info(
                 {
@@ -155,11 +157,14 @@ class Trainer:
             )
 
     def _init_evaluation_inference_variables(self):
-        assert self.config.model_state_dicts_path and os.path.exists(
-            self.config.model_state_dicts_path
+        assert (
+            self.config.model_file.file_path
+            and os.path.exists(self.config.model_file.file_path)
+            and self.config.model_file.file_type
+            in (ModelFileType.STATE_DICT, ModelFileType.TORCHSCRIPT)
         ), "Invalid model state dicts path"
 
-        self.model_state_dicts_path = self.config.model_state_dicts_path
+        self.model_file_path = self.config.model_file.file_path
         self.train_dataset, self.val_dataset = self.build_dataset()
         self.train_dataset_sampler, self.val_dataset_sampler = (
             self.build_dataset_sampler()
@@ -167,11 +172,14 @@ class Trainer:
         self.batch_size = self.config.dataloader.batch_size
         self.num_workers = self.config.dataloader.num_workers
         self.train_dataloader, self.val_dataloader = self.build_dataloader()
-        self.model = DDPUtils.move_model_to_device(self.build_model())
-        self._load_state_dicts_for_evaluation_inference(self.model_state_dicts_path)
-        self.logger.info(
-            f"Loaded model state dicts from {self.config.model_state_dicts_path}"
-        )
+
+        if self.config.model_file.file_type == ModelFileType.STATE_DICT:
+            self.model = DDPUtils.move_model_to_device(self.build_model())
+            self._load_state_dicts_for_evaluation_inference(self.model_file_path)
+        else:
+            scripted_model = self.load_model_torchscript(self.model_file_path)
+            self.model = DDPUtils.move_model_to_device(scripted_model)
+        self.logger.info(f"Loaded model file from {self.model_file_path}")
 
     def _load_state_dicts_to_resume_training(self, state_dicts_path: str):
         assert os.path.exists(
@@ -197,15 +205,15 @@ class Trainer:
         self.current_train_epoch = state_dicts["epoch"]
         self.current_train_step = state_dicts["step"]
 
-    def _load_state_dicts_for_evaluation_inference(self, state_dicts_path: str):
+    def _load_state_dicts_for_evaluation_inference(self, model_file_path: str):
         assert os.path.exists(
-            state_dicts_path
-        ), f"State dicts path does not exist: {state_dicts_path}"
+            model_file_path
+        ), f"State dicts path does not exist: {model_file_path}"
 
         map_location = None
         if self.is_distributed_job:
             map_location = {"cuda:0": f"cuda:{self.rank}"}
-        state_dicts = torch.load(state_dicts_path, map_location=map_location)
+        state_dicts = torch.load(model_file_path, map_location=map_location)
 
         required_keys = ["model"]
         assert all(
@@ -216,6 +224,16 @@ class Trainer:
             self.model.module.load_state_dict(state_dicts["model"])
         else:
             self.model.load_state_dict(state_dicts["model"])
+
+    def load_model_torchscript(self, model_script_path: str) -> torch.nn.Module:
+        assert os.path.exists(
+            model_script_path
+        ), f"Model script path does not exist: {model_script_path}"
+
+        map_location = None
+        if self.is_distributed_job:
+            map_location = {"cuda:0": f"cuda:{self.rank}"}
+        return torch.jit.load(model_script_path, map_location=map_location)
 
     def _delete_model_snapshot(self):
         if os.path.exists(self.model_snapshot_path):
@@ -284,6 +302,11 @@ class Trainer:
         return train_dataloader, val_dataloader
 
     def build_model(self) -> torch.nn.Module:
+        if (
+            self.job_type in (JobType.EVALUATION, JobType.INFERENCE)
+            and self.config.model_file.file_type == ModelFileType.TORCHSCRIPT
+        ):
+            return
         raise NotImplementedError
 
     def build_optimizer(self, **kwargs) -> torch.optim.Optimizer:
@@ -335,9 +358,9 @@ class Trainer:
             self.log_wandb_metrics(train_step_metrics, "train")
         if not self.step_by_epoch and self.is_master_process:
             if self.current_train_step % self.checkpoint_every == 0:
-                self.save_model_state_dicts()
+                self.checkpoint_model()
             if self.current_train_step % self.snapshot_every == 0:
-                self.save_model_snapshot()
+                self._save_model_snapshot()
         if self.current_train_step % self.validate_every == 0:
             self._run_validation_epoch()
         self.do_on_train_step_end()
@@ -398,9 +421,9 @@ class Trainer:
     def _do_on_train_epoch_end(self) -> None:
         if self.step_by_epoch and self.is_master_process:
             if self.current_train_epoch % self.checkpoint_every == 0:
-                self.save_model_state_dicts()
+                self.checkpoint_model()
             if self.current_train_epoch % self.snapshot_every == 0:
-                self.save_model_snapshot()
+                self._save_model_snapshot()
         if self.current_train_epoch % self.validate_every == 0:
             self._run_validation_epoch()
         self.do_on_train_epoch_end()
@@ -537,55 +560,59 @@ class Trainer:
         self._run_inference_epoch()
 
     def save_model_state_dicts(
-        self,
-        is_snapshot: bool = False,
-        is_best: bool = False,
+        self, save_path: str, model: torch.nn.Module = None
     ) -> None:
         assert self.is_master_process, "Only save model state dicts in master process"
-        state = {
-            "epoch": self.current_train_epoch,
-            "step": self.current_train_step,
-            "model": (
+        if model is not None:
+            model_to_save = model
+        else:
+            model_to_save = (
                 self.model.module.state_dict()
                 if self.is_distributed_job
                 else self.model.state_dict()
-            ),
+            )
+        state = {
+            "epoch": self.current_train_epoch,
+            "step": self.current_train_step,
+            "model": model_to_save,
             "optimizer": self.optimizer.state_dict(),
             "lr_scheduler": self.lr_scheduler.state_dict(),
         }
-        if is_best:
-            self.logger.info(
-                {
-                    "msg": "Best model found. Saving model",
-                    "train_epoch": self.current_train_epoch,
-                    "train_step": self.current_train_step,
-                }
-            )
-            path = os.path.join(self.model_checkpoint_dir, "best.t7")
-        elif is_snapshot:
-            path = os.path.join(self.model_snapshot_path)
+        torch.save(state, save_path)
+
+    def save_model_torchscript(self, save_path: str, model: torch.nn.Module = None):
+        assert self.is_master_process, "Only save model state dicts in master process"
+        if model is not None:
+            model_to_save = model
         else:
-            self.logger.debug(
-                {
-                    "msg": "Saving model checkpoint",
-                    "train_epoch": self.current_train_epoch,
-                    "train_step": self.current_train_step,
-                }
-            )
-            path = os.path.join(
+            model_to_save = self.model.module if self.is_distributed_job else self.model
+        scripted_model = torch.jit.script(model_to_save)
+        scripted_model.save(save_path)
+
+    def checkpoint_model(self) -> None:
+        if not self.is_master_process:
+            return
+        self.save_model_state_dicts(
+            os.path.join(
                 self.model_checkpoint_dir, f"checkpoint_{self.current_train_step}.t7"
             )
-        torch.save(state, path)
+        )
+        self.save_model_torchscript(
+            os.path.join(
+                self.model_checkpoint_dir, f"checkpoint_{self.current_train_step}.pt"
+            )
+        )
 
-    def save_best_model_state_dicts(self) -> None:
+    def save_best_model(self) -> None:
         if not self.is_master_process:
             return
-        self.save_model_state_dicts(is_best=True)
+        self.save_model_state_dicts(os.path.join(self.model_checkpoint_dir, "best.t7"))
+        self.save_model_torchscript(os.path.join(self.model_checkpoint_dir, "best.pt"))
 
-    def save_model_snapshot(self) -> None:
+    def _save_model_snapshot(self) -> None:
         if not self.is_master_process:
             return
-        self.save_model_state_dicts(is_snapshot=True)
+        self.save_model_state_dicts(save_path=self.model_snapshot_path)
 
     def log_wandb_metrics(self, metrics: Dict, category: str = "") -> None:
         if not self.wandb_logger:
