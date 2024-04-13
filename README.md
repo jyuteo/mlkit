@@ -64,7 +64,7 @@ Define and implement required methods for respective steps
     def validation_step(self, batch_data) -> Dict:
         # implement it
 
-    if  __name__  == "__main__":
+    if __name__ == "__main__":
         config = TrainConfig(...)
         trainer = CNNTrainer(config)
         trainer.train()
@@ -94,7 +94,7 @@ Define and implement required methods for respective steps
         def validation_step(self, batch_data) -> Dict:
             # implement it
 
-    if  __name__  == "__main__":
+    if __name__ == "__main__":
         config = EvaluationConfig(...)
         trainer = CNNEvaluator(config)
         trainer.evaluate()
@@ -124,7 +124,7 @@ Define and implement required methods for respective steps
         def inference_step(self, batch_data) -> Dict:
             # implement it
 
-    if  __name__  == "__main__":
+    if __name__ == "__main__":
         config = InferenceConfig(...)
         trainer = CNNInference(config)
         trainer.inference()
