@@ -443,7 +443,7 @@ class Trainer:
     def validation_step(self, batch_data: Any) -> Optional[Dict]:
         """
         Return value will be appened to self.validation_step_results_for_an_epoch,
-        and can be used to calculate validation metrics for the a validation epoch in later step
+        and can be used to calculate metrics for the a epoch in later step
         """
         if self.job_type in (JobType.TRAIN, JobType.EVALUATION):
             raise NotImplementedError
@@ -505,6 +505,10 @@ class Trainer:
         self._run_validation_epoch()
 
     def inference_step(self, batch_data: Any) -> Optional[Dict]:
+        """
+        Return value will be appened to self.inference_step_results_for_an_epoch,
+        and can be used to calculate metrics for the a epoch in later step
+        """
         if self.job_type == JobType.INFERENCE:
             raise NotImplementedError
 

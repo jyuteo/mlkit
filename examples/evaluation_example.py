@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 
-from typing import Dict
+from typing import Dict, Tuple
 from omegaconf import DictConfig
 from torchvision import datasets, transforms
 
@@ -31,7 +31,7 @@ class CNNEvaluator(Trainer):
     ):
         super().__init__(config)
 
-    def build_dataset(self) -> torch.utils.data.Dataset:
+    def build_dataset(self) -> Tuple[None, torch.utils.data.Dataset]:
         transform = transforms.Compose(
             [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
         )
