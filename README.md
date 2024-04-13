@@ -96,7 +96,7 @@ Define and implement required methods for respective steps
 
     if  __name__  == "__main__":
         config = EvaluationConfig(...)
-        trainer = CNNTrainer(config)
+        trainer = CNNEvaluator(config)
         trainer.evaluate()
   ```
 
@@ -106,7 +106,7 @@ Define and implement required methods for respective steps
     from mlkit.trainer import Trainer
     from mlkit.configs import InferenceConfig
 
-    class CNNEvaluator(Trainer):
+    class CNNInference(Trainer):
         def __init__(
             self,
             config: InferenceConfig,
@@ -126,7 +126,7 @@ Define and implement required methods for respective steps
 
     if  __name__  == "__main__":
         config = InferenceConfig(...)
-        trainer = CNNTrainer(config)
+        trainer = CNNInference(config)
         trainer.inference()
   ```
 
