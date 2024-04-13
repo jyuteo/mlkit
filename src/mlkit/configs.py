@@ -1,5 +1,17 @@
 from dataclasses import dataclass, asdict, field
 from typing import List, Optional
+from enum import Enum
+
+
+class JobType(Enum):
+    TRAIN = "train"
+    EVALUATION = "evaluation"
+    INFERENCE = "inference"
+
+
+class ModelFileType(Enum):
+    STATE_DICT = "state_dict"
+    TORCHSCRIPT = "torchscript"
 
 
 class Config:
@@ -48,10 +60,10 @@ class LRSchedulerConfig(Config):
 @dataclass
 class ModelCheckpointConfig(Config):
     """
-    saves model state dicts throughout training phase at defined steps
+    Saves model state dicts throughout training phase at defined steps.
 
-    if step_by_epoch = True, and checkpoint_every = 2, then model state dict will be saved every 2 epochs
-    if step_by_epoch = False, and checkpoint_every = 2, then model state dict will be saved every 2 train steps
+    If step_by_epoch = True, and checkpoint_every = 2, then model state dict will be saved every 2 epochs.
+    If step_by_epoch = False, and checkpoint_every = 2, then model state dict will be saved every 2 train steps.
     """  # noqa: E501
 
     checkpoint_every: int
@@ -61,26 +73,37 @@ class ModelCheckpointConfig(Config):
 @dataclass
 class ModelSnapshotConfig(Config):
     """
-    saves latest model state dict at current train step, mainly for resume of interrupted training
-    snapshot will be deleted when training is finished
+    Saves latest model state dict at current train step, mainly for resume of interrupted training.
+    Snapshot will be deleted when training is finished.
 
-    if step_by_epoch = True, and snapshot_every = 2, then model snapshot will be saved every 2 epochs
-    if step_by_epoch = False, and snapshot_every = 2, then model snapshot will be saved every 2 train steps
+    If step_by_epoch = True, and snapshot_every = 2, then model snapshot will be saved every 2 epochs.
+    If step_by_epoch = False, and snapshot_every = 2, then model snapshot will be saved every 2 train steps.
     """  # noqa: E501
 
     snapshot_every: int
-    save_path: str = "./snapshots/snapshot.t7"
+    save_dir: str = "./snapshots"
 
 
 @dataclass
 class ResumeTrainingConfig(Config):
     """
-    if enabled, training will resume from the model state dict in the path provided
-    else, training will start from scratch
+    If enabled, training will resume from the model state dict in the path provided.
+    Else, training will start from scratch.
     """
 
     enabled: bool = False
     model_state_dict_path: str = ""
+
+
+@dataclass
+class ModelFileConfig(Config):
+    """
+    Specifies the type of saved model to be loaded during evaluation or inference.
+    It can be in state dict (.t7) or torchscript (.pt) file.
+    """
+
+    file_type: ModelFileType
+    file_path: str
 
 
 @dataclass
@@ -101,21 +124,19 @@ class TrainConfig(Config):
     resume_training: ResumeTrainingConfig = field(default_factory=ResumeTrainingConfig)
 
 
-@ dataclass
+@dataclass
 class EvaluationConfig(Config):
-    model_state_dicts_path: str
-
     env_vars_file_path: str = ".env"
     log: LogConfig = field(default_factory=LogConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
     dataloader: DataLoaderConfig = field(default_factory=DataLoaderConfig)
+    model_file: ModelFileConfig = field(default_factory=ModelFileConfig)
 
 
 @dataclass
 class InferenceConfig(Config):
-    model_state_dicts_path: str
-
     env_vars_file_path: str = ".env"
     log: LogConfig = field(default_factory=LogConfig)
     wandb: WandBConfig = WandBConfig(enabled=False)
     dataloader: DataLoaderConfig = field(default_factory=DataLoaderConfig)
+    model_file: ModelFileConfig = field(default_factory=ModelFileConfig)

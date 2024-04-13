@@ -49,7 +49,7 @@ model_checkpoint:
 
 model_snapshot:
   snapshot_every: 200
-  save_path: ./snapshots/snapshot.t7
+  save_dir: ./snapshots
 
 resume_training:
   enabled: false

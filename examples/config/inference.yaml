@@ -30,4 +30,6 @@ dataloader:
   batch_size: 128
   num_workers: 4
 
-model_state_dicts_path: "./checkpoints/best.t7"
+model_file:
+  file_type: state_dict
+  file_path: "./checkpoints/best.t7"
