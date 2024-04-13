@@ -47,7 +47,7 @@ Define and implement required methods for respective steps
   class CNNTrainer(Trainer):
     def __init__(
         self,
-        train_config: TrainConfig,
+        config: TrainConfig,
         **kwargs,
     ):
         super().__init__(config)
