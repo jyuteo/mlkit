@@ -7,7 +7,6 @@ from typing import List, Dict, Tuple, Any, Optional, Union
 from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
 from dotenv import load_dotenv
-from enum import Enum
 
 from .loggers.logger import Logger
 from .loggers.metrics_logger import MetricsLogger
