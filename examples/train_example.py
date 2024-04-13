@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-from typing import Dict
+from typing import Dict, Tuple
 from omegaconf import DictConfig
 from torchvision import datasets, transforms
 
@@ -57,17 +57,19 @@ class Net(nn.Module):
 class CNNTrainer(Trainer):
     def __init__(
         self,
-        train_config: TrainConfig,
+        config: TrainConfig,
         **kwargs,
     ):
-        super().__init__(train_config)
+        super().__init__(config)
 
         self.best_metrics: Dict = {}
 
     def build_model(self) -> torch.nn.Module:
         return Net()
 
-    def build_dataset(self) -> torch.utils.data.Dataset:
+    def build_dataset(
+        self,
+    ) -> Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset]:
         transform = transforms.Compose(
             [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
         )
