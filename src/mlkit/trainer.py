@@ -225,7 +225,7 @@ class Trainer:
         else:
             self.model.load_state_dict(state_dicts["model"])
 
-    def load_model_torchscript(self, model_script_path: str) -> torch.jit.ScriptModule:
+    def load_model_torchscript(self, model_script_path: str) -> torch.nn.Module:
         assert os.path.exists(
             model_script_path
         ), f"Model script path does not exist: {model_script_path}"
