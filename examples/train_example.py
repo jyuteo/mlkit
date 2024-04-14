@@ -152,52 +152,6 @@ class CNNTrainer(Trainer):
                 return False
 
 
-def plot_metrics(log_filepath: str):
-    with open(log_filepath, "r") as f:
-        data = json.load(f)
-
-    train_loss_x, train_loss_y, lr_y = [], [], []
-    if "train" in data:
-        train_loss_x = [x["step"] for x in data["train"]]
-        train_loss_y = [x["loss"] for x in data["train"]]
-        lr_y = [x["lr"] for x in data["train"]]
-
-    val_loss_x, val_loss_y, val_accuracy_y = [], [], []
-    if "val" in data:
-        val_loss_x = [x["step"] for x in data["val"]]
-        val_loss_y = [x["loss"] for x in data["val"]]
-        val_accuracy_y = [x["accuracy"] for x in data["val"]]
-
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 8))
-
-    ax1.plot(train_loss_x, train_loss_y, label="train", color="blue")
-    ax1.set_xlabel("Step")
-    ax1.set_ylabel("Loss")
-    ax1.legend()
-    ax1.set_title("Training Loss")
-
-    ax2.plot(val_loss_x, val_loss_y, label="val", color="orange")
-    ax2.set_xlabel("Step")
-    ax2.set_ylabel("Loss")
-    ax2.legend()
-    ax2.set_title("Validation Loss")
-
-    ax3.plot(val_loss_x, val_accuracy_y, label="val", color="green")
-    ax3.set_xlabel("Step")
-    ax3.set_ylabel("Accuracy")
-    ax3.legend()
-    ax3.set_title("Validation Accuracy")
-
-    ax4.plot(lr_y, label="lr", color="yellow")
-    ax4.set_xlabel("Step")
-    ax4.set_ylabel("Learning Rate")
-    ax4.legend()
-    ax4.set_title("Learning Rate")
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(log_filepath), "metrics.png"))
-
-
 @hydra.main(config_path="config", config_name="train", version_base=None)
 def main(cfg: DictConfig) -> None:
     TrainerUtils.set_random_seed_and_torch_deterministic(**cfg.deterministic)
@@ -225,8 +179,6 @@ def main(cfg: DictConfig) -> None:
     else:
         trainer = CNNTrainer(train_config)
         trainer.train()
-
-    plot_metrics(cfg.log.metrics_log_path)
 
 
 if __name__ == "__main__":
