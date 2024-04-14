@@ -1,9 +1,7 @@
 # Description   : An example for training a CNN model using the MLKit framework
 # Usage         : [CUDA_VISIBLE_DEVICES=0,1](optional) torchrun --standalone --nproc_per_node=2 train_example.py  # noqa: E501
 
-import os
 import hydra
-import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
