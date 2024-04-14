@@ -79,24 +79,32 @@ class WandBLogger:
         )
         self._is_enabled = True
         self.logger.info(
-            f"WANDB run starting with id {wandb.run.id} and name {wandb.run.name}."
+            f"WandB run starting with id {wandb.run.id} and name {wandb.run.name}."
         )
 
     def close(self):
         if not self.is_master_process:
             return
         wandb.finish()
-        self.logger.info("Wandb closed.")
+        self.logger.info("WandB closed.")
+
+    def get_run_id(self):
+        if not self._is_enabled:
+            raise RuntimeError("Unable to get run id as WandBLogger is disabled")
+        return wandb.run.id
 
     def log(self, *args, **kwargs):
         if not self.is_master_process:
             return
-        if self._is_enabled:
-            return wandb.log(*args, **kwargs)
+        if not self._is_enabled:
+            raise RuntimeError("Unable to log to WandB as WandBLogger is disabled")
+        return wandb.log(*args, **kwargs)
 
     def log_metrics(self, metrics: Dict, step: int, category: str = ""):
         if not self.is_master_process:
             return
+        if not self._is_enabled:
+            raise RuntimeError("Unable to log to WandB as WandBLogger is disabled")
         if not category:
             self.log(metrics, step=step)
         else:
@@ -107,6 +115,10 @@ class WandBLogger:
             self.log(metrics_with_category, step=step)
 
     def log_table(self, table: Union[wandb.Table, pd.DataFrame], table_name: str):
+        if not self.is_master_process:
+            return
+        if not self._is_enabled:
+            raise RuntimeError("Unable to log to WandB as WandBLogger is disabled")
         if isinstance(table, pd.DataFrame):
             table = wandb.Table(dataframe=table)
         elif not isinstance(table, wandb.Table):
@@ -120,3 +132,23 @@ class WandBLogger:
             chunk = table.data[start:end]
             table_name = table_name if i == 0 else f"{table_name} - {i + 1}"
             wandb.log({table_name: wandb.Table(data=chunk)})
+
+    def log_model(self, model_path: str, name: Optional[str] = None):
+        if not self.is_master_process:
+            return
+        if not self._is_enabled:
+            raise RuntimeError("Unable to log to WandB as WandBLogger is disabled")
+        if name:
+            name = f"run-{self.get_run_id()}-{name}"
+            wandb.log_model(path=model_path, name=name)
+        else:
+            wandb.log_model(path=model_path)
+
+    def log_summary(self, summary: Dict):
+        if not self.is_master_process:
+            return
+        if not self._is_enabled:
+            raise RuntimeError("Unable to log to WandB as WandBLogger is disabled")
+        for k, v in summary.items():
+            wandb.run.summary[k] = v
+            wandb.run.summary.update()

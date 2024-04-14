@@ -26,9 +26,9 @@ deterministic:
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 3
+train_epochs: 6
 step_by_epoch: false
-validate_every: 100
+validate_every: 500
 
 dataloader:
   batch_size: 128
@@ -44,7 +44,7 @@ lr_scheduler:
   gamma: 0.01
 
 model_checkpoint:
-  checkpoint_every: 1000
+  checkpoint_every: 200
   save_dir: ./checkpoints
 
 model_snapshot:
