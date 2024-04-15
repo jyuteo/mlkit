@@ -229,9 +229,6 @@ class Trainer:
             model_script_path
         ), f"Model script path does not exist: {model_script_path}"
 
-        # map_location = None
-        # if self.is_distributed_job:
-        #     map_location = {"cuda:0": f"cuda:{self.rank}"}
         return torch.jit.load(model_script_path)
 
     def _delete_model_snapshot(self):
