@@ -71,7 +71,7 @@ class MetricsLogger:
             elif value.dim() == 1:
                 return value.tolist()
             else:
-                return value.numpy().tolist()
+                return value.cpu().numpy().tolist()
         elif isinstance(value, list):
             return [self._convert_to_serializable(item) for item in value]
         elif isinstance(value, dict):

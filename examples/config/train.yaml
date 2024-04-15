@@ -26,9 +26,9 @@ deterministic:
   torch_use_deterministic_algorithms: true
   cudnn_backend_deterministic: true
 
-train_epochs: 6
+train_epochs: 10
 step_by_epoch: false
-validate_every: 500
+validate_every: 200
 
 dataloader:
   batch_size: 128

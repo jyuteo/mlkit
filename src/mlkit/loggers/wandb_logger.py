@@ -45,7 +45,7 @@ class WandBLogger:
 
     def login(self) -> bool:
         if not self.is_master_process:
-            return
+            return True
         if any(
             wandb_env_var not in os.environ for wandb_env_var in self.REQUIRED_ENV_VARS
         ):
