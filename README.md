@@ -30,6 +30,12 @@ Training, evaluation, and inference can be conducted using a standardized approa
    WANDB_API_KEY=
    ```
 
+## Installation
+To install this package in your python environment, run
+```shell
+pip install git+ssh://git@github.com/jyuteo/mlkit.git
+```
+
 ## Usage
 
 Create configuration files (train.yaml, eval.yaml, inference.yaml) specifying the experiment settings, including model, data, optimization, and logging parameters.
